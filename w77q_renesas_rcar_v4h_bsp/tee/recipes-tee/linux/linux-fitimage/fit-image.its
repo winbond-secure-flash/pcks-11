@@ -1,0 +1,209 @@
+/dts-v1/;
+
+/ {
+	description = "Linux kernel and FDT blob for r8a779g3-sparrow-hawk";
+
+	images {
+		kernel-1 {
+			description = "Linux kernel";
+			data = /incbin/("./Image");
+			type = "kernel";
+			arch = "arm64";
+			os = "linux";
+			compression = "none";
+			load = <0x50200000>;
+			entry = <0x50200000>;
+			hash-1 {
+				algo = "crc32";
+			};
+		};
+		fdt-1 {
+			description = "Flattened Device Tree blob";
+			data = /incbin/("./r8a779g3-sparrow-hawk.dtb");
+			type = "flat_dt";
+			arch = "arm64";
+			compression = "none";
+			hash-1 {
+				algo = "crc32";
+			};
+		};
+		atf-1 {
+			description = "ARM Trusted Firmware";
+			data = /incbin/("./bl31.bin");
+			type = "tfa-bl31";
+			arch = "arm64";
+			os = "arm-trusted-firmware";
+			compression = "none";
+			load = <0x46400000>;
+			entry = <0x46400000>;
+			hash-1 {
+				algo = "crc32";
+			};
+		};
+		optee-1 {
+			description = "OP-TEE OS";
+			data = /incbin/("./tee.bin");
+			type = "tee";
+			arch = "arm64";
+			os = "tee";
+			compression = "none";
+			load = <0x44100000>;
+			entry = <0x44100000>;
+			hash-1 {
+				algo = "crc32";
+			};
+		};
+		ramdisk-1 {
+			description = "Initramfs for driver loading";
+			data = /incbin/("./uInitramfs.cpio.gz");
+			type = "ramdisk";
+			arch = "arm64";
+			os = "linux";
+			compression = "none";
+			hash-1 {
+				algo = "crc32";
+			};
+		};
+		script {
+			description = "Boot script for automatic applying dt-overlay ";
+			data = /incbin/("./boot.cmd");
+			type = "script";
+			arch = "arm64";
+			os = "u-boot";
+			compression = "none";
+			hash-1 {
+				algo = "crc32";
+			};
+		};
+
+		fdt-j1-imx219 {
+			description = "Flattened Device Tree Overlay";
+			data = /incbin/("./r8a779g3-sparrow-hawk-camera-j1-imx219.dtbo");
+			type = "flat_dt";
+			arch = "arm64";
+			compression = "none";
+			hash-1 {
+				algo = "crc32";
+			};
+		};
+		fdt-j2-imx219 {
+			description = "Flattened Device Tree Overlay";
+			data = /incbin/("./r8a779g3-sparrow-hawk-camera-j2-imx219.dtbo");
+			type = "flat_dt";
+			arch = "arm64";
+			compression = "none";
+			hash-1 {
+				algo = "crc32";
+			};
+		};
+		fdt-j1-imx462 {
+			description = "Flattened Device Tree Overlay";
+			data = /incbin/("./r8a779g3-sparrow-hawk-camera-j1-imx462.dtbo");
+			type = "flat_dt";
+			arch = "arm64";
+			compression = "none";
+			hash-1 {
+				algo = "crc32";
+			};
+		};
+		fdt-j2-imx462 {
+			description = "Flattened Device Tree Overlay";
+			data = /incbin/("./r8a779g3-sparrow-hawk-camera-j2-imx462.dtbo");
+			type = "flat_dt";
+			arch = "arm64";
+			compression = "none";
+			hash-1 {
+				algo = "crc32";
+			};
+		};
+		fdt-j1-imx708 {
+			description = "Flattened Device Tree Overlay";
+			data = /incbin/("./r8a779g3-sparrow-hawk-camera-j1-imx708.dtbo");
+			type = "flat_dt";
+			arch = "arm64";
+			compression = "none";
+			hash-1 {
+				algo = "crc32";
+			};
+		};
+		fdt-j2-imx708 {
+			description = "Flattened Device Tree Overlay";
+			data = /incbin/("./r8a779g3-sparrow-hawk-camera-j2-imx708.dtbo");
+			type = "flat_dt";
+			arch = "arm64";
+			compression = "none";
+			hash-1 {
+				algo = "crc32";
+			};
+		};
+		fdt-fan-argon40 {
+			description = "Flattened Device Tree Overlay";
+			data = /incbin/("./r8a779g3-sparrow-hawk-fan-argon40.dtbo");
+			type = "flat_dt";
+			arch = "arm64";
+			compression = "none";
+			hash-1 {
+				algo = "crc32";
+			};
+		};
+		fdt-fan-pwm {
+			description = "Flattened Device Tree Overlay";
+			data = /incbin/("./r8a779g3-sparrow-hawk-fan-pwm.dtbo");
+			type = "flat_dt";
+			arch = "arm64";
+			compression = "none";
+			hash-1 {
+				algo = "crc32";
+			};
+		};
+
+	};
+
+	configurations {
+		default = "default";
+		default {
+			description = "Boot Linux kernel with FDT blob";
+			kernel = "kernel-1";
+			fdt = "fdt-1";
+			loadables = "atf-1", "optee-1";
+			hash-1 {
+				algo = "crc32";
+			};
+		};
+		initramfs {
+			description = "Boot Linux kernel with FDT blob/Initramfs";
+			kernel = "kernel-1";
+			fdt = "fdt-1";
+			loadables = "atf-1", "optee-1";
+			ramdisk = "ramdisk-1";
+			hash-1 {
+				algo = "crc32";
+			};
+		};
+
+		j1-imx219 {
+			fdt = "fdt-j1-imx219";
+		};
+		j2-imx219 {
+			fdt = "fdt-j2-imx219";
+		};
+		j1-imx462 {
+			fdt = "fdt-j1-imx462";
+		};
+		j2-imx462 {
+			fdt = "fdt-j2-imx462";
+		};
+		j1-imx708 {
+			fdt = "fdt-j1-imx708";
+		};
+		j2-imx708 {
+			fdt = "fdt-j2-imx708";
+		};
+		fan-argon40 {
+			fdt = "fdt-fan-argon40";
+		};
+		fan-pwm {
+			fdt = "fdt-fan-pwm";
+		};
+	};
+};

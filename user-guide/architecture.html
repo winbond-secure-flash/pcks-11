@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Architecture — W77Q/T PKCS#11</title>
+<link href="style.css" rel="stylesheet" type="text/css"/>
+</head>
+<body>
+
+<div id="titlearea">
+    <div>
+        <div id="projectname">W77Q/T PKCS#11 Secure Storage</div>
+        <div id="projectbrief">Release User Guide — Renesas R-Car V4H Sparrow Hawk</div>
+    </div>
+    <div id="projectlogo"><img alt="Winbond" src="winbond_logo.png"/></div>
+</div>
+
+<div id="nav-bar">
+    <a href="index.html">Home</a>
+    <a href="architecture.html" class="active">Architecture</a>
+    <a href="package-contents.html">Package Contents</a>
+    <a href="build-guide.html">Build</a>
+    <a href="flash-and-boot.html">Flash &amp; Boot</a>
+    <a href="pkcs11-usage.html">PKCS#11 Usage</a>
+    <a href="provisioning.html">Configuration</a>
+    <a href="testing.html">Testing</a>
+    <a href="security.html">CVE Disclaimer</a>
+    <a href="release-notes.html">Release Notes</a>
+</div>
+
+<div class="contents">
+
+<h1>Architecture</h1>
+
+<h2>Data Flow</h2>
+<p>The complete data path from a Linux application down to the W77Q/T secure flash chip:</p>
+<div class="diagram">
+Linux application (pkcs11-tool, OpenSSL, custom app)
+    │
+    ▼  PKCS#11 API (libckteec.so)
+OP-TEE Secure World
+    │  PKCS#11 Trusted Application
+    ▼
+File system - LittleFS backend (power-fail safe metadata updates)
+    │
+    ▼  w77q_read / w77q_write / w77q_erase_sector
+QLIB — authenticated session library (libqlib.a)
+    │
+    ▼  PLAT_SPI_WriteReadTransaction
+R-Car V4H RPC-IF SPI controller → W77Q/T flash chip
+</div>
+
+<h3>Layer Descriptions</h3>
+<table>
+<tr><th>Layer</th><th>Description</th></tr>
+<tr><td><strong>PKCS#11 API</strong></td><td><code>libckteec.so</code> — client library that marshals PKCS#11 calls into OP-TEE TEE Client API invocations</td></tr>
+<tr><td><strong>PKCS#11 TA</strong></td><td>Upstream OP-TEE Trusted Application — manages tokens, sessions, keys, crypto operations</td></tr>
+<tr><td><strong>tee_lfs_storage.c + w77q_lfs_port.c</strong></td><td>LittleFS storage backend with authenticated flash I/O via QLIB, mount/format-on-first-boot, power-fail-safe metadata updates</td></tr>
+<tr><td><strong>w77q_qlib.c</strong></td><td>QLIB session wrapper — InitLib → Connect → LoadKey → OpenSession; exposes read/write/erase</td></tr>
+<tr><td><strong>QLIB (libqlib.a)</strong></td><td>Winbond prebuilt library — manages authenticated SPI sessions, key derivation, secure commands</td></tr>
+<tr><td><strong>qlib_platform.c</strong></td><td>Board-specific SPI driver — R-Car V4H RPC-IF register-level transfers + OP-TEE crypto callbacks</td></tr>
+<tr><td><strong>W77Q/T chip</strong></td><td>Hardware secure NOR flash — enforces section access policies, monotonic counters, OTP keys</td></tr>
+</table>
+
+<h2>Boot Chain</h2>
+<img src="boot_sequence.png" alt="Boot Chain: Boot ROM → BL2 → BL31 (TF-A) → BL32 (OP-TEE) → Linux" style="max-width:70%;"/>
+
+<h3>Boot Stages</h3>
+<table>
+<tr><th>Stage</th><th>Name</th><th>Stored On</th><th>Runs In</th><th>Primary Goal</th></tr>
+<tr><td>1</td><td>Boot ROM</td><td>SoC Hardware</td><td>CPU Cache</td><td>Find &amp; load BL2 from Flash</td></tr>
+<tr><td>2</td><td>BL2</td><td>W77Q/T Flash</td><td>Internal SRAM</td><td>Initialize DDR (RAM)</td></tr>
+<tr><td>3</td><td>BL31</td><td>W77Q/T Flash</td><td>DDR (RAM)</td><td>Runtime Services (Secure) — RPC-IF init, LIFEC lock</td></tr>
+<tr><td>4</td><td>BL32</td><td>W77Q/T Flash</td><td>DDR (RAM)</td><td>Secure OS (OP-TEE) — PKCS#11 TA, W77Q/T storage</td></tr>
+<tr><td>5</td><td>BL33</td><td>W77Q/T Flash</td><td>DDR (RAM)</td><td>U-Boot → Load Linux from SD card</td></tr>
+</table>
+
+<h3>Security Boundary</h3>
+<div class="info">
+<strong>SPI flash is locked to Secure World.</strong> BL31 writes LIFEC register
+<code>0xE611007C</code> bit 22 to prevent Normal World (Linux) from accessing the
+RPC-IF SPI controller. All flash I/O must go through OP-TEE after this point.
+</div>
+
+<h2>Storage Architecture</h2>
+<div class="diagram">
+W77Q/T Flash (64 MB total)
+┌─────────────────────────────────────────────────┐
+│ Section 0 (4 MB) — Boot Firmware                │  0x000000 – 0x3FFFFF
+│   BL2, BL31, OP-TEE, U-Boot                     │  Read-only after provisioning
+├─────────────────────────────────────────────────┤
+│ Section 1 (16 MB) — PKCS#11 Storage             │  0x400000 – 0x13FFFFF
+│   LittleFS volume (tokens, keys, certs, meta)   │  Authenticated R/W session
+│   Mounted by tee_lfs_storage in OP-TEE          │
+│   Geometry from W77Q_LFS_* configuration        │
+├─────────────────────────────────────────────────┤
+│ Remaining — Reserved / Unused                   │  0x1400000 – 0x3FFFFFF
+└─────────────────────────────────────────────────┘
+</div>
+
+<p class="note">
+  <strong>Block size tip:</strong> For deployments with 20–50 PKCS#11 objects,
+  setting <code>W77Q_LFS_BLOCK_SIZE = 8192U</code> in <code>w77q_lfs_port.h</code>
+  reduces flash erase operations by up to 4× compared to the default 4 KB block.
+  Outside that range the default 4 KB block is more efficient.
+  Note that changing block size requires a storage reformat (all objects are lost).
+</p>
+
+</div><!-- contents -->
+
+<div id="footer">
+    <strong>Copyright &copy; 2026 Winbond Electronics Corporation. All Rights Reserved.</strong>
+    | <a href="License.txt">License</a>
+    | <a href="ThirdPartyLicenses.txt">Third-Party Licenses</a>
+</div>
+
+</body>
+</html>

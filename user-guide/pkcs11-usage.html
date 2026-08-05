@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>PKCS#11 Usage — W77Q/T PKCS#11</title>
+<link href="style.css" rel="stylesheet" type="text/css"/>
+</head>
+<body>
+
+<div id="titlearea">
+    <div>
+        <div id="projectname">W77Q/T PKCS#11 Secure Storage</div>
+        <div id="projectbrief">Release User Guide — Renesas R-Car V4H Sparrow Hawk</div>
+    </div>
+    <div id="projectlogo"><img alt="Winbond" src="winbond_logo.png"/></div>
+</div>
+
+<div id="nav-bar">
+    <a href="index.html">Home</a>
+    <a href="architecture.html">Architecture</a>
+    <a href="package-contents.html">Package Contents</a>
+    <a href="build-guide.html">Build</a>
+    <a href="flash-and-boot.html">Flash &amp; Boot</a>
+    <a href="pkcs11-usage.html" class="active">PKCS#11 Usage</a>
+    <a href="provisioning.html">Configuration</a>
+    <a href="testing.html">Testing</a>
+    <a href="security.html">CVE Disclaimer</a>
+    <a href="release-notes.html">Release Notes</a>
+</div>
+
+<div class="contents">
+
+<h1>PKCS#11 Usage</h1>
+
+<p>The PKCS#11 module path is <code>/usr/lib/libckteec.so</code>. Use it with any
+PKCS#11-compatible tool or application.</p>
+
+<h2>Installed Files</h2>
+<table>
+<tr><th>File</th><th>Description</th></tr>
+<tr><td><code>/usr/lib/optee_armtz/fd02c9da-306c-48c7-a49c-bbd827ae86ee.ta</code></td><td>PKCS#11 Trusted Application</td></tr>
+<tr><td><code>/usr/lib/libckteec.so</code></td><td>PKCS#11 client library (module path)</td></tr>
+<tr><td><code>/usr/bin/pkcs11-tool</code></td><td>OpenSC command-line PKCS#11 utility</td></tr>
+</table>
+
+<h2>Initialize a Token</h2>
+<pre><code># Initialize token on slot 0
+pkcs11-tool --module /usr/lib/libckteec.so \
+    --init-token --label "W77Q-Token" --so-pin 12345678
+
+# Set user PIN
+pkcs11-tool --module /usr/lib/libckteec.so \
+    --init-pin --token-label "W77Q-Token" --so-pin 12345678 --new-pin 1234</code></pre>
+
+<h2>Generate Key Pairs</h2>
+
+<h3>RSA 2048</h3>
+<pre><code>pkcs11-tool --module /usr/lib/libckteec.so \
+    --token-label "W77Q-Token" --pin 1234 \
+    --keypairgen --key-type rsa:2048 --label "rsa-key"</code></pre>
+
+<h3>EC P-256</h3>
+<pre><code>pkcs11-tool --module /usr/lib/libckteec.so \
+    --token-label "W77Q-Token" --pin 1234 \
+    --keypairgen --key-type EC:prime256v1 --label "ec-key"</code></pre>
+
+<h3>AES 256</h3>
+<pre><code>pkcs11-tool --module /usr/lib/libckteec.so \
+    --token-label "W77Q-Token" --pin 1234 \
+    --keygen --key-type aes:32 --label "aes-key"</code></pre>
+
+<h2>Sign Data</h2>
+<pre><code>echo "Hello W77Q/T" > /tmp/data.txt
+
+pkcs11-tool --module /usr/lib/libckteec.so \
+    --token-label "W77Q-Token" --pin 1234 \
+    --sign --mechanism SHA256-RSA-PKCS \
+    --label "rsa-key" \
+    --input-file /tmp/data.txt \
+    --output-file /tmp/sig.bin</code></pre>
+
+<h2>Verify Signature</h2>
+<pre><code>pkcs11-tool --module /usr/lib/libckteec.so \
+    --token-label "W77Q-Token" --pin 1234 \
+    --verify --mechanism SHA256-RSA-PKCS \
+    --label "rsa-key" \
+    --input-file /tmp/data.txt \
+    --signature-file /tmp/sig.bin</code></pre>
+
+<h2>List Objects</h2>
+<pre><code>pkcs11-tool --module /usr/lib/libckteec.so \
+    --token-label "W77Q-Token" --pin 1234 \
+    --list-objects</code></pre>
+
+<h2>Delete Objects</h2>
+<pre><code>pkcs11-tool --module /usr/lib/libckteec.so \
+    --token-label "W77Q-Token" --pin 1234 \
+    --delete-object --type privkey --label "rsa-key"</code></pre>
+
+<h2>Use with OpenSSL</h2>
+<p>OpenSSL can use the PKCS#11 module via the <code>pkcs11</code> engine or provider:</p>
+
+<h3>Generate a Self-Signed Certificate</h3>
+<pre><code>openssl req -new -x509 \
+    -engine pkcs11 -keyform engine \
+    -key "pkcs11:token=W77Q-Token;object=rsa-key;pin-value=1234" \
+    -out /tmp/cert.pem -days 365 \
+    -subj "/CN=W77Q/T Test/O=Winbond"</code></pre>
+
+<h3>TLS Server Test</h3>
+<pre><code># Start a test TLS server using the PKCS#11 key
+openssl s_server -engine pkcs11 \
+    -keyform engine \
+    -key "pkcs11:token=W77Q-Token;object=rsa-key;pin-value=1234" \
+    -cert /tmp/cert.pem -accept 4433</code></pre>
+
+<h2>Use with ssh-agent</h2>
+<pre><code># Add PKCS#11 module to ssh-agent
+ssh-add -s /usr/lib/libckteec.so
+
+# List keys (shows PKCS#11 keys alongside regular SSH keys)
+ssh-add -L</code></pre>
+
+<h2>Demo Application</h2>
+<p>The release includes a demo app at <code>/usr/bin/pkcs11-app</code> (built from
+<code>recipes-examples/pkcs11-app/</code>) that demonstrates:</p>
+<ul>
+    <li>Token initialization</li>
+    <li>RSA key generation</li>
+    <li>Sign and verify</li>
+    <li>Object enumeration</li>
+</ul>
+<pre><code># Run the demo
+pkcs11-app</code></pre>
+
+<h2>Supported Mechanisms</h2>
+<p>The OP-TEE PKCS#11 TA supports the following mechanisms (non-exhaustive):</p>
+<table>
+<tr><th>Category</th><th>Mechanisms</th></tr>
+<tr><td>RSA</td><td>RSA-PKCS, SHA256-RSA-PKCS, SHA384-RSA-PKCS, RSA-PKCS-OAEP, RSA-PKCS-PSS</td></tr>
+<tr><td>EC</td><td>ECDSA, ECDSA-SHA256, ECDSA-SHA384, ECDH1-DERIVE</td></tr>
+<tr><td>AES</td><td>AES-CBC, AES-CTR, AES-GCM, AES-ECB, AES-KEY-WRAP</td></tr>
+<tr><td>Hash</td><td>SHA-256, SHA-384, SHA-512</td></tr>
+<tr><td>HMAC</td><td>SHA256-HMAC, SHA384-HMAC</td></tr>
+</table>
+
+<h2>Session Management Best Practice</h2>
+<div class="note">
+<strong>Minimize <code>C_Login</code> calls — each login writes to flash.</strong><br/>
+On this PKCS#11 implementation, every <code>C_Login</code> updates OP-TEE's token database
+(<code>token.db</code>) on the LittleFS volume, triggering two
+copy-modify-write operations on the underlying flash erase blocks.  Calling <code>C_Login</code> repeatedly (e.g. once per
+cryptographic request) accumulates wear and shortens flash lifetime.<br/><br/>
+<strong>Best practice:</strong> open a session, log in once, and keep that
+session open for the lifetime of the application process, reusing it across
+all <code>C_Sign</code>, <code>C_Decrypt</code>, and other operations.
+</div>
+
+</div><!-- contents -->
+
+<div id="footer">
+    <strong>Copyright &copy; 2026 Winbond Electronics Corporation. All Rights Reserved.</strong>
+    | <a href="License.txt">License</a>
+    | <a href="ThirdPartyLicenses.txt">Third-Party Licenses</a>
+</div>
+
+</body>
+</html>

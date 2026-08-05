@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Build Guide — W77Q/T PKCS#11</title>
+<link href="style.css" rel="stylesheet" type="text/css"/>
+</head>
+<body>
+
+<div id="titlearea">
+    <div>
+        <div id="projectname">W77Q/T PKCS#11 Secure Storage</div>
+        <div id="projectbrief">Release User Guide — Renesas R-Car V4H Sparrow Hawk</div>
+    </div>
+    <div id="projectlogo"><img alt="Winbond" src="winbond_logo.png"/></div>
+</div>
+
+<div id="nav-bar">
+    <a href="index.html">Home</a>
+    <a href="architecture.html">Architecture</a>
+    <a href="package-contents.html">Package Contents</a>
+    <a href="build-guide.html" class="active">Build</a>
+    <a href="flash-and-boot.html">Flash &amp; Boot</a>
+    <a href="pkcs11-usage.html">PKCS#11 Usage</a>
+    <a href="provisioning.html">Configuration</a>
+    <a href="testing.html">Testing</a>
+    <a href="security.html">CVE Disclaimer</a>
+    <a href="release-notes.html">Release Notes</a>
+</div>
+
+<div class="contents">
+
+<h1>Build Guide</h1>
+
+<h2>1. Host Prerequisites</h2>
+<p>A Linux build host is required (Ubuntu 22.04 or 24.04 recommended).</p>
+
+<p><strong>Ubuntu 22.04:</strong></p>
+<pre><code>sudo apt update && sudo apt install -y \
+    gawk wget git diffstat unzip texinfo gcc build-essential \
+    chrpath socat cpio python3 python3-pip python3-pexpect \
+    xz-utils debianutils iputils-ping python3-git python3-jinja2 \
+    libegl1-mesa libsdl1.2-dev pylint xterm python3-subunit \
+    mesa-common-dev zstd liblz4-tool file bmap-tools \
+    picocom screen libssl-dev</code></pre>
+
+<p><strong>Ubuntu 24.04:</strong></p>
+<pre><code>sudo apt update && sudo apt install -y \
+    gawk wget git diffstat unzip texinfo gcc build-essential \
+    chrpath socat cpio python3 python3-pip python3-pexpect \
+    xz-utils debianutils iputils-ping python3-git python3-jinja2 \
+    libegl-dev libsdl1.2-dev pylint xterm python3-subunit \
+    mesa-common-dev zstd liblz4-tool file bmap-tools \
+    picocom screen libssl-dev</code></pre>
+
+<p><strong>Requirements:</strong></p>
+<ul>
+    <li>Disk space: ~100 GB free</li>
+    <li>RAM: 16 GB+ recommended</li>
+    <li>CPU: 8+ cores recommended (Yocto is heavily parallelized)</li>
+</ul>
+
+<div class="note">
+<strong>No separate Yocto installation needed.</strong> The build system (Poky/OpenEmbedded)
+is automatically cloned by <code>build.sh</code> on the first run if not already present.
+The <code>apt</code> packages listed above are the only manual host setup required.
+</div>
+
+<h2>2. Clone External Dependencies</h2>
+
+<div class="note">
+The upstream BSP layer is not included in this release. You must clone it yourself.
+Poky and meta-openembedded are fetched automatically by <code>build.sh</code> on the first run.
+</div>
+
+<pre><code># From the release root directory:
+git clone --branch scarthgap \
+    https://github.com/rcar-community/meta-sparrow-hawk.git \
+    imports/meta-sparrow-hawk</code></pre>
+<div class="note">
+Expected output:
+<pre>Cloning into 'imports/meta-sparrow-hawk'...
+remote: Enumerating objects: 2169, done.
+remote: Counting objects: 100% (903/903), done.
+remote: Compressing objects: 100% (316/316), done.
+Receiving objects: 100% (2169/2169), 2.10 MiB | 5.00 MiB/s, done.
+Resolving deltas: 100% (1173/1173), done.</pre>
+</div>
+
+<h2>3. Expected Directory Layout</h2>
+<pre><code>release-root/
+├── build.sh                     ← run this
+├── user-guide/                  ← documentation (you are here)
+├── imports/
+│   ├── meta-sparrow-hawk/       ← cloned in step 2
+│   └── meta-optee-pkcs11/       ← included in release
+├── meta-w77q-pkcs11/            ← included in release
+└── w77q_renesas_rcar_v4h_bsp/   ← included in release</code></pre>
+
+<h2>4. Build</h2>
+
+<pre><code>bash build.sh</code></pre>
+<div class="note">
+Expected output (last lines on success):
+<pre>NOTE: Tasks Summary: Attempted 4521 tasks of which 4300 didn't need to be rerun and all succeeded.
+
+=== Build complete ===
+Output artifacts copied to: meta-w77q-pkcs11/output_pkcs11/</pre>
+</div>
+
+<p>The build script performs these steps:</p>
+<ol>
+    <li>Validates that all sibling repositories are present</li>
+    <li>Creates symlinks in the Yocto build workspace</li>
+    <li>Injects <code>meta-w77q-pkcs11</code>'s template (adds all layers to <code>bblayers.conf</code>)</li>
+    <li>Invokes the upstream BSP <code>build.sh</code> (which sources <code>oe-init-build-env</code>)</li>
+    <li>Copies output artifacts to <code>meta-w77q-pkcs11/output_pkcs11/</code></li>
+</ol>
+
+<h3>Build Options</h3>
+<table>
+<tr><th>Option</th><th>Effect</th></tr>
+<tr><td><code>./build.sh --weston</code></td><td>Include Weston graphics stack (GPU/display support)</td></tr>
+</table>
+
+<h3>First Build Time</h3>
+<p>The first build downloads all sources and compiles from scratch — expect
+<strong>1–3 hours</strong> depending on host CPU and internet speed. Subsequent builds
+use Yocto's shared-state cache and complete in <strong>15–30 minutes</strong>.</p>
+
+<h2>5. WSL Note</h2>
+<p>When running under Windows Subsystem for Linux on a <code>/mnt/</code> path, the build
+directory is automatically redirected to <code>$HOME/yocto-sparrow-hawk</code> to avoid
+NTFS performance issues. A symlink is created at the expected location.</p>
+
+<h2>6. Build Outputs</h2>
+<p>After a successful build, artifacts are in <code>meta-w77q-pkcs11/output_pkcs11/</code>:</p>
+<table>
+<tr><th>File</th><th>Description</th></tr>
+<tr><td><code>flash.bin</code></td><td>SPI NOR image (BL2 + BL31 + OP-TEE + U-Boot)</td></tr>
+<tr><td><code>fitImage</code></td><td>Linux kernel + device tree (FIT format)</td></tr>
+<tr><td><code>core-image-minimal-sparrow-hawk.rootfs.wic.gz</code></td><td>Complete SD card image (compressed)</td></tr>
+<tr><td><code>core-image-minimal-sparrow-hawk.rootfs.wic.bmap</code></td><td>Block map for fast flashing</td></tr>
+</table>
+
+<h2>7. Rebuilding Individual Recipes</h2>
+<p>After the initial build, you can rebuild specific components without a full rebuild:</p>
+<pre><code># Enter the Yocto build environment
+source imports/meta-sparrow-hawk/build/build-sparrow-hawk/conf/../../poky/oe-init-build-env \
+    imports/meta-sparrow-hawk/build/build-sparrow-hawk
+
+# Rebuild OP-TEE OS only (after W77Q/T code changes)
+bitbake optee-os -c cleansstate && bitbake optee-os
+
+# Rebuild the full image
+bitbake core-image-minimal</code></pre>
+
+</div><!-- contents -->
+
+<div id="footer">
+    <strong>Copyright &copy; 2026 Winbond Electronics Corporation. All Rights Reserved.</strong>
+    | <a href="License.txt">License</a>
+    | <a href="ThirdPartyLicenses.txt">Third-Party Licenses</a>
+</div>
+
+</body>
+</html>

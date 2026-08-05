@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>W77Q/T PKCS#11 User Guide</title>
+<link href="style.css" rel="stylesheet" type="text/css"/>
+</head>
+<body>
+
+<div id="titlearea">
+    <div>
+        <div id="projectname">W77Q/T PKCS#11 Secure Storage</div>
+        <div id="projectbrief">Release User Guide — Renesas R-Car V4H Sparrow Hawk</div>
+    </div>
+    <div id="projectlogo"><img alt="Winbond" src="winbond_logo.png"/></div>
+</div>
+
+<div id="nav-bar">
+    <a href="index.html" class="active">Home</a>
+    <a href="architecture.html">Architecture</a>
+    <a href="package-contents.html">Package Contents</a>
+    <a href="build-guide.html">Build</a>
+    <a href="flash-and-boot.html">Flash &amp; Boot</a>
+    <a href="pkcs11-usage.html">PKCS#11 Usage</a>
+    <a href="provisioning.html">Configuration</a>
+    <a href="testing.html">Testing</a>
+    <a href="security.html">CVE Disclaimer</a>
+    <a href="release-notes.html">Release Notes</a>
+</div>
+
+<div class="contents">
+
+<h1>W77Q/T PKCS#11 User Guide</h1>
+
+<div class="warning">
+<strong>ALPHA RELEASE</strong> — This is a pre-production technology preview.
+APIs, flash layout, and provisioning flows may change without notice.
+Do not deploy to production systems.
+</div>
+
+<p>
+This release provides <strong>PKCS#11 secure key and object storage on Winbond W77Q/T secure NOR flash</strong>
+for the Renesas R-Car V4H Sparrow Hawk board. Keys and certificates are generated
+and stored entirely inside OP-TEE Secure World — they never appear in Normal World
+(Linux) memory.
+</p>
+
+<p>
+The underlying storage uses the <strong>QLIB</strong> authenticated session protocol
+to protect data at rest on the W77Q/T flash chip. All cryptographic operations are
+performed within the ARM TrustZone secure environment.
+</p>
+
+<h2>Resources</h2>
+<ul>
+    <li><a href="architecture.html">Architecture</a> — data flow, boot chain, storage layout</li>
+    <li><a href="package-contents.html">Package Contents</a> — what's in the release</li>
+    <li><a href="build-guide.html">Build Guide</a> — prerequisites, setup, and build</li>
+    <li><a href="flash-and-boot.html">Flash &amp; Boot</a> — write SD card, flash SPI, first boot</li>
+    <li><a href="pkcs11-usage.html">PKCS#11 Usage</a> — token init, keygen, sign, OpenSSL</li>
+    <li><a href="provisioning.html">Configuration</a> — W77Q/T key provisioning and section layout</li>
+    <li><a href="testing.html">Testing</a> — test scope, running the suite, interpreting results</li>
+    <li><a href="security.html">CVE Disclaimer</a> — component ownership, third-party CVE responsibilities</li>
+    <li><a href="release-notes.html">Release Notes</a> — version history, known limitations, component versions</li>
+</ul>
+
+<h2>Known Limitations</h2>
+<ol>
+    <li><strong>Development keys in use</strong> — sample keys are hardcoded; must be replaced for production.</li>
+    <li><strong>LittleFS geometry compatibility</strong> — storage now uses the LittleFS backend. Changing block geometry (for example <code>W77Q_LFS_BLOCK_SIZE</code>) requires reformatting PKCS#11 storage; existing data is not layout-compatible across geometry changes.</li>
+</ol>
+
+</div><!-- contents -->
+
+<div id="footer">
+    <strong>Copyright &copy; 2026 Winbond Electronics Corporation. All Rights Reserved.</strong>
+    | <a href="License.txt">License</a>
+    | <a href="ThirdPartyLicenses.txt">Third-Party Licenses</a>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Flash &amp; Boot — W77Q/T PKCS#11</title>
+<link href="style.css" rel="stylesheet" type="text/css"/>
+</head>
+<body>
+
+<div id="titlearea">
+    <div>
+        <div id="projectname">W77Q/T PKCS#11 Secure Storage</div>
+        <div id="projectbrief">Release User Guide — Renesas R-Car V4H Sparrow Hawk</div>
+    </div>
+    <div id="projectlogo"><img alt="Winbond" src="winbond_logo.png"/></div>
+</div>
+
+<div id="nav-bar">
+    <a href="index.html">Home</a>
+    <a href="architecture.html">Architecture</a>
+    <a href="package-contents.html">Package Contents</a>
+    <a href="build-guide.html">Build</a>
+    <a href="flash-and-boot.html" class="active">Flash &amp; Boot</a>
+    <a href="pkcs11-usage.html">PKCS#11 Usage</a>
+    <a href="provisioning.html">Configuration</a>
+    <a href="testing.html">Testing</a>
+    <a href="security.html">CVE Disclaimer</a>
+    <a href="release-notes.html">Release Notes</a>
+</div>
+
+<div class="contents">
+
+<h1>Flash &amp; Boot</h1>
+
+<h2>1. Prerequisites</h2>
+
+<div class="note">
+Use the canonical host setup from <a href="build-guide.html">Build Guide → Host Prerequisites</a>.
+This page assumes those tools are already installed.
+</div>
+
+
+
+<h2>2. Write SD Card</h2>
+<p>The WIC image contains the full root filesystem, kernel (fitImage), and device tree.</p>
+
+<p>Identify the SD card device:</p>
+<pre><code>lsblk</code></pre>
+<p>Look for the SD card by its size (e.g., <code>/dev/sde</code>).</p>
+
+<h3>Using bmaptool (recommended — fast, sparse-aware)</h3>
+<pre><code>sudo bmaptool copy \
+    meta-w77q-pkcs11/output_pkcs11/core-image-minimal-sparrow-hawk.rootfs.wic.gz \
+    /dev/sdX</code></pre>
+<div class="note">
+Expected output:
+<pre>bmaptool: info: block map format version 2.0
+bmaptool: info: 1234567 blocks of size 4096 (4.7 GiB), mapped 512345 blocks (2.0 GiB or 41.5%)
+bmaptool: info: copying image ... done</pre>
+</div>
+
+<h3>Using dd (fallback)</h3>
+<pre><code>zcat meta-w77q-pkcs11/output_pkcs11/core-image-minimal-sparrow-hawk.rootfs.wic.gz | \
+    sudo dd of=/dev/sdX bs=4M status=progress
+sync</code></pre>
+<div class="note">
+Expected output:
+<pre>4831838208 bytes (4.8 GB, 4.5 GiB) copied, 312 s, 15.5 MB/s
+1152+1 records in
+1152+1 records out</pre>
+</div>
+
+<div class="warning">
+<strong>Replace <code>/dev/sdX</code></strong> with your actual SD card device. Double-check with
+<code>lsblk</code> before writing — this will overwrite all data on the target device.
+</div>
+
+<h2>3. Flash SPI NOR (Boot Firmware)</h2>
+<p>The <code>flash.bin</code> image contains BL2 + BL31 (with RPC-IF init) + OP-TEE + U-Boot.
+It must be written to the board's SPI NOR flash.</p>
+
+<h3>Step-by-step procedure</h3>
+<ol>
+<li>Ensure the board is in <strong>normal boot mode</strong> — DIP-switch pins 1-3 set to <strong>ON</strong>.</li>
+<li>Connect the USB serial cable (USB-Micro USB) between the host PC and the board.</li>
+<li>Power on the board (or leave it powered — the script handles both cases).</li>
+<li>Run the flash script:</li>
+</ol>
+
+<h3>Using the deploy script</h3>
+<p>The script catches U-Boot autoboot, loads <code>flash.bin</code> via Y-Modem, and writes it to SPI NOR:</p>
+<pre><code>sudo python3 w77q_renesas_rcar_v4h_bsp/scripts/deploy-flash-bin.py \
+    --flash meta-w77q-pkcs11/output_pkcs11/flash.bin \
+    --port /dev/ttyUSB0</code></pre>
+<div class="warning">
+Make sure <code>--port</code> points to the correct serial device. Use <code>ls /dev/ttyUSB*</code>
+to list available ports. In most setups the board console is <code>/dev/ttyUSB0</code>.
+</div>
+<div class="note">
+Expected output:
+<pre>[ ok  ] OP-TEE driver initialized — flash successful!
+[ ok  ] deploy-flash-bin complete.</pre>
+</div>
+
+
+
+<h2>4. Serial Console</h2>
+<p>Connect the board serial port using a USB-Micro USB cable.</p>
+<pre><code>sudo minicom -c on -D /dev/ttyUSB0 -b 921600</code></pre>
+<p>Default serial port: <code>/dev/ttyUSB0</code> (FTDI adapter) or <code>/dev/ttyACM0</code> (native USB).
+Serial settings: 921600 baud, 8N1, no flow control.</p>
+
+<h2>5. Boot Sequence</h2>
+<p>After power-on, you should see the following on the serial console:</p>
+<pre><code>NOTICE:  BL2: R-Car V4H Rev1.0
+...
+NOTICE:  BL31: RPC-IF initialized for W77Q/T
+NOTICE:  BL31: LIFEC locked SPI to Secure World
+...
+I/TC: OP-TEE version: 4.5.0
+I/TC: W77Q/T: QLIB initialized (2 dies, section 1 open)
+...
+[    0.000000] Linux version 6.6...
+...
+sparrow-hawk login:</code></pre>
+
+<h2>6. First-Boot Verification</h2>
+<pre><code># Login as root (no password on development image)
+
+# 1. Check TEE device exists
+ls /dev/tee0 /dev/teepriv0</code></pre>
+<div class="note">
+Expected output:
+<pre>/dev/tee0  /dev/teepriv0</pre>
+</div>
+
+<pre><code># 2. Verify tee-supplicant is running
+systemctl status optee.service</code></pre>
+<div class="note">
+Expected output:
+<pre>● optee.service - OP-TEE supplicant
+     Active: active (running) since ...</pre>
+</div>
+
+<pre><code># 3. Verify PKCS#11 TA is installed
+ls /usr/lib/optee_armtz/fd02c9da-306c-48c7-a49c-bbd827ae86ee.ta</code></pre>
+<div class="note">
+Expected output:
+<pre>/usr/lib/optee_armtz/fd02c9da-306c-48c7-a49c-bbd827ae86ee.ta</pre>
+</div>
+
+<pre><code># 4. Verify PKCS#11 client library
+ls /usr/lib/libckteec.so</code></pre>
+<div class="note">
+Expected output:
+<pre>/usr/lib/libckteec.so</pre>
+</div>
+
+<pre><code># 5. Initialize PKCS#11 (first boot only)
+#    On a fresh image the TA is not yet provisioned.
+#    Run the test menu and select "reset" to initialize:
+pkcs-test-menu.py</code></pre>
+
+<pre><code># 6. List PKCS#11 slots
+pkcs11-tool --module /usr/lib/libckteec.so --list-slots</code></pre>
+<div class="note">
+Expected output:
+<pre>Available slots:
+Slot 0 (0x0): OP-TEE PKCS11 TA - TEE UUID ...
+  token label        : test-token
+  token manufacturer : Linaro
+  token model        : OP-TEE TA
+  token flags        : login required, rng, token initialized, PIN initialized
+Slot 1 (0x1): OP-TEE PKCS11 TA - TEE UUID ...
+  token state:   uninitialized
+Slot 2 (0x2): OP-TEE PKCS11 TA - TEE UUID ...
+  token state:   uninitialized</pre>
+</div>
+
+<h2>7. Troubleshooting</h2>
+<table>
+<tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr>
+<tr><td>No <code>/dev/tee0</code></td><td>OP-TEE not in boot chain</td><td>Verify <code>flash.bin</code> was written correctly; check BL31 log for OP-TEE handoff</td></tr>
+<tr><td><code>optee.service</code> failed</td><td>tee-supplicant crash</td><td>Check <code>journalctl -u optee</code>; ensure kernel TEE driver is loaded</td></tr>
+<tr><td>PKCS#11 slots empty</td><td>TA not installed</td><td>Verify <code>.ta</code> file exists in <code>/usr/lib/optee_armtz/</code></td></tr>
+<tr><td>W77Q/T init timeout in OP-TEE log</td><td>SPI not initialized</td><td>Check BL31 RPC-IF init messages; verify W77Q/T chip is soldered/connected</td></tr>
+</table>
+
+</div><!-- contents -->
+
+<div id="footer">
+    <strong>Copyright &copy; 2026 Winbond Electronics Corporation. All Rights Reserved.</strong>
+    | <a href="License.txt">License</a>
+    | <a href="ThirdPartyLicenses.txt">Third-Party Licenses</a>
+</div>
+
+</body>
+</html>

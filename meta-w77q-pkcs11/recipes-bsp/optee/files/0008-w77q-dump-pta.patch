@@ -1,0 +1,357 @@
+From 0000000000000000000000000000000000000008 Mon Sep 17 00:00:00 2001
+From: Sparrow Hawk BSP <bsp@sparrow-hawk>
+Date: Wed, 01 Jan 2025 00:00:00 +0000
+Subject: [PATCH 8/8] pta: add W77Q flash dump Pseudo-TA
+
+Upstream-Status: Inappropriate [BSP-specific W77Q diagnostic support]
+
+Add a Pseudo-TA (w77q_dump.pta) that exposes two commands callable from
+Normal World via libteec:
+
+  W77Q_DUMP_CMD_LIST_ALL (0) — enumerate every object in the tee_lfs store
+    regardless of owning TA UUID.  Returns packed ts_lut_entry records.
+
+  W77Q_DUMP_CMD_READ_RAW (1) — read raw bytes from the W77Q flash by
+    byte offset, bypassing the FS layer.
+
+  W77Q_DUMP_CMD_WRITE_RAW (2) — write raw bytes to W77Q flash (diagnostic).
+
+  W77Q_DUMP_CMD_ERASE_SECTOR (3) — erase the 4 KB sector at a given offset;
+    LUT rebuilt from flash afterwards.
+
+  W77Q_DUMP_CMD_ERASE_CHIP (4) — erase all of section 1; reinitialise
+    dynamic block and rescan (LUT will be empty).
+
+Both read/write/erase commands call tee_lfs_*() functions defined in
+core/tee/tee_lfs_storage.c and compiled unconditionally when CFG_W77Q_FS=y.
+
+Compiled only when CFG_W77Q_DUMP_PTA=y.
+
+Signed-off-by: Sparrow Hawk BSP <bsp@sparrow-hawk>
+---
+ core/pta/sub.mk              |   4 +
+ core/pta/w77q_dump.c         | 186 +++++++++++++++++++++++++++++++++++++++
+ core/include/w77q_dump_ta.h  | 107 ++++++++++++++++++++++++++++++++
+ 3 files changed, 297 insertions(+)
+
+diff --git a/core/pta/sub.mk b/core/pta/sub.mk
+index aaaaab2..aaaaab5 100644
+--- a/core/pta/sub.mk
++++ b/core/pta/sub.mk
+@@ -1,7 +1,11 @@
+ subdirs-$(CFG_TEE_CORE_EMBED_INTERNAL_TESTS) += tests
+ 
+ # W77Q one-time section-key provisioning (factory use only)
+ srcs-$(CFG_W77Q_QLIB_PROVISION) += w77q_provision.c
+ 
++# W77Q flash dump / LUT enumerate (diagnostic use)
++srcs-$(CFG_W77Q_DUMP_PTA) += w77q_dump.c
++cflags-w77q_dump.c-y += -Wno-declaration-after-statement
++
+ srcs-$(CFG_ATTESTATION_PTA) += attestation.c
+ srcs-$(CFG_DEVICE_ENUM_PTA) += device.c
+diff --git a/core/pta/w77q_dump.c b/core/pta/w77q_dump.c
+new file mode 100644
+index 0000000..aaaaab6
+--- /dev/null
++++ b/core/pta/w77q_dump.c
+@@ -0,0 +1,186 @@
++// SPDX-License-Identifier: BSD-2-Clause
++/*
++ * core/pta/w77q_dump.c — Pseudo-TA for W77Q flash diagnostics.
++ *
++ * W77Q_DUMP_CMD_LIST_ALL: enumerate all objects in tee_lfs storage (all TAs).
++ * W77Q_DUMP_CMD_READ_RAW: read raw bytes from W77Q flash by byte offset.
++ * W77Q_DUMP_CMD_WRITE_RAW: write raw bytes to W77Q flash (diagnostic).
++ * W77Q_DUMP_CMD_ERASE_SECTOR: erase 4KB sector + rebuild LUT.
++ * W77Q_DUMP_CMD_ERASE_CHIP: erase all of section 1 + reinit + rebuild LUT.
++ *
++ * Compiled only when CFG_W77Q_DUMP_PTA=y.
++ */
++
++#include <kernel/pseudo_ta.h>
++#include <trace.h>
++#include <string.h>
++
++#include <w77q_dump_ta.h>
++#include "../tee/tee_lfs_storage.h"
++
++#define PTA_NAME "w77q_dump.pta"
++
++/* Callback context for LIST_ALL — appends entries into the output buffer. */
++struct list_ctx {
++	struct w77q_dump_entry *buf;
++	uint32_t cap;   /* capacity in entries */
++	uint32_t count; /* entries written so far */
++};
++
++static int list_cb(const uint8_t ta_uuid[16], uint32_t flash_off,
++		   uint32_t data_size, const uint8_t *obj_id,
++		   uint32_t obj_id_len, void *ctx_)
++{
++	struct list_ctx *ctx = ctx_;
++
++	if (ctx->count >= ctx->cap)
++		return 1; /* stop iteration — buffer full */
++
++	struct w77q_dump_entry *e = &ctx->buf[ctx->count++];
++	if (obj_id_len > W77Q_DUMP_OBJ_ID_MAX)
++		obj_id_len = W77Q_DUMP_OBJ_ID_MAX;
++	memcpy(e->ta_uuid, ta_uuid, 16);
++	e->flash_off  = flash_off;
++	e->data_size  = data_size;
++	e->obj_id_len = obj_id_len;
++	memcpy(e->obj_id, obj_id, obj_id_len);
++	return 0;
++}
++
++static TEE_Result cmd_list_all(uint32_t ptypes, TEE_Param params[4])
++{
++	const uint32_t exp = TEE_PARAM_TYPES(TEE_PARAM_TYPE_MEMREF_INOUT,
++					     TEE_PARAM_TYPE_VALUE_OUTPUT,
++					     TEE_PARAM_TYPE_NONE,
++					     TEE_PARAM_TYPE_NONE);
++	if (ptypes != exp)
++		return TEE_ERROR_BAD_PARAMETERS;
++
++	struct list_ctx ctx = {
++		.buf   = params[0].memref.buffer,
++		.cap   = params[0].memref.size / sizeof(struct w77q_dump_entry),
++		.count = 0,
++	};
++
++	tee_lfs_list_all(list_cb, &ctx);
++
++	params[0].memref.size = ctx.count * sizeof(struct w77q_dump_entry);
++	params[1].value.a     = ctx.count;
++	return TEE_SUCCESS;
++}
++
++static TEE_Result cmd_read_raw(uint32_t ptypes, TEE_Param params[4])
++{
++	const uint32_t exp = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
++					     TEE_PARAM_TYPE_MEMREF_INOUT,
++					     TEE_PARAM_TYPE_NONE,
++					     TEE_PARAM_TYPE_NONE);
++	if (ptypes != exp)
++		return TEE_ERROR_BAD_PARAMETERS;
++
++	uint32_t off = params[0].value.a;
++	TEE_Result res = tee_lfs_read_raw(off, params[1].memref.buffer,
++					  params[1].memref.size);
++	return res;
++}
++
++static TEE_Result cmd_write_raw(uint32_t ptypes, TEE_Param params[4])
++{
++	const uint32_t exp = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
++					     TEE_PARAM_TYPE_MEMREF_INPUT,
++					     TEE_PARAM_TYPE_NONE,
++					     TEE_PARAM_TYPE_NONE);
++	if (ptypes != exp)
++		return TEE_ERROR_BAD_PARAMETERS;
++
++	uint32_t off = params[0].value.a;
++	return tee_lfs_write_raw(off, params[1].memref.buffer,
++				 params[1].memref.size);
++}
++
++static TEE_Result cmd_erase_sector(uint32_t ptypes, TEE_Param params[4])
++{
++	const uint32_t exp = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
++					     TEE_PARAM_TYPE_NONE,
++					     TEE_PARAM_TYPE_NONE,
++					     TEE_PARAM_TYPE_NONE);
++	if (ptypes != exp)
++		return TEE_ERROR_BAD_PARAMETERS;
++
++	return tee_lfs_erase_sector(params[0].value.a);
++}
++
++static TEE_Result cmd_erase_chip(uint32_t ptypes, TEE_Param params[4] __unused)
++{
++	const uint32_t exp = TEE_PARAM_TYPES(TEE_PARAM_TYPE_NONE,
++					     TEE_PARAM_TYPE_NONE,
++					     TEE_PARAM_TYPE_NONE,
++					     TEE_PARAM_TYPE_NONE);
++	if (ptypes != exp)
++		return TEE_ERROR_BAD_PARAMETERS;
++
++	return tee_lfs_erase_chip();
++}
++
++static TEE_Result cmd_read_plain(uint32_t ptypes, TEE_Param params[4])
++{
++	const uint32_t exp = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
++					     TEE_PARAM_TYPE_MEMREF_INOUT,
++					     TEE_PARAM_TYPE_NONE,
++					     TEE_PARAM_TYPE_NONE);
++	if (ptypes != exp)
++		return TEE_ERROR_BAD_PARAMETERS;
++
++	uint32_t off = params[0].value.a;
++	TEE_Result res = tee_lfs_read_plain(off, params[1].memref.buffer,
++					    params[1].memref.size);
++	return res;
++}
++
++static TEE_Result cmd_read_file(uint32_t ptypes, TEE_Param params[4])
++{
++	const uint32_t exp = TEE_PARAM_TYPES(TEE_PARAM_TYPE_MEMREF_INPUT,
++					     TEE_PARAM_TYPE_MEMREF_INOUT,
++					     TEE_PARAM_TYPE_NONE,
++					     TEE_PARAM_TYPE_NONE);
++	if (ptypes != exp)
++		return TEE_ERROR_BAD_PARAMETERS;
++
++	/* params[0]: ta_uuid (16 bytes) || obj_id (remaining bytes) */
++	const uint8_t *in = params[0].memref.buffer;
++	uint32_t in_sz = params[0].memref.size;
++	size_t out_sz = 0;
++	TEE_Result res;
++
++	if (in_sz < 17 || in_sz - 16 > W77Q_DUMP_OBJ_ID_MAX)
++		return TEE_ERROR_BAD_PARAMETERS;
++
++	res = tee_lfs_read_file(in, (const char *)(in + 16), in_sz - 16,
++				params[1].memref.buffer,
++				params[1].memref.size, &out_sz);
++	if (res == TEE_SUCCESS)
++		params[1].memref.size = out_sz;
++	return res;
++}
++
++static TEE_Result invoke_command(void *sess __unused, uint32_t cmd,
++				 uint32_t ptypes, TEE_Param params[4])
++{
++	switch (cmd) {
++	case W77Q_DUMP_CMD_LIST_ALL:     return cmd_list_all(ptypes, params);
++	case W77Q_DUMP_CMD_READ_RAW:     return cmd_read_raw(ptypes, params);
++	case W77Q_DUMP_CMD_WRITE_RAW:    return cmd_write_raw(ptypes, params);
++	case W77Q_DUMP_CMD_ERASE_SECTOR: return cmd_erase_sector(ptypes, params);
++	case W77Q_DUMP_CMD_ERASE_CHIP:   return cmd_erase_chip(ptypes, params);
++	case W77Q_DUMP_CMD_READ_PLAIN:   return cmd_read_plain(ptypes, params);
++	case W77Q_DUMP_CMD_READ_FILE:    return cmd_read_file(ptypes, params);
++	default:
++		EMSG("w77q_dump: unknown command %u", cmd);
++		return TEE_ERROR_NOT_IMPLEMENTED;
++	}
++}
++
++pseudo_ta_register(.uuid = W77Q_DUMP_TA_UUID,
++		   .name = PTA_NAME,
++		   .flags = PTA_DEFAULT_FLAGS,
++		   .invoke_command_entry_point = invoke_command);
+diff --git a/core/include/w77q_dump_ta.h b/core/include/w77q_dump_ta.h
+new file mode 100644
+index 0000000..aaaaab7
+--- /dev/null
++++ b/core/include/w77q_dump_ta.h
+@@ -0,0 +1,107 @@
++/* SPDX-License-Identifier: BSD-2-Clause */
++/*
++ * Shared UUID and command definitions for the W77Q flash dump Pseudo-TA.
++ * Include in both the PTA (Secure World) and Normal World CA tools.
++ */
++#ifndef W77Q_DUMP_TA_H
++#define W77Q_DUMP_TA_H
++
++#include <stdint.h>
++
++/*
++ * W77Q dump Pseudo-TA UUID:
++ *   3e8a1b2c-4f5d-6e7a-8b9c-0d1e2f3a4b5c
++ */
++#define W77Q_DUMP_TA_UUID \
++	{ 0x3e8a1b2cU, 0x4f5dU, 0x6e7aU, \
++	  { 0x8bU, 0x9cU, 0x0dU, 0x1eU, 0x2fU, 0x3aU, 0x4bU, 0x5cU } }
++
++/*
++ * W77Q_DUMP_CMD_LIST_ALL — Return all entries in the w77q_fs LUT.
++ *
++ * params[0]: MEMREF_INOUT  output buffer of w77q_dump_entry[]
++ *            .size updated to bytes written on return
++ * params[1]: VALUE_OUTPUT  .a = number of entries written
++ *
++ * Returns TEEC_SUCCESS.
++ */
++#define W77Q_DUMP_CMD_LIST_ALL  0U
++
++/*
++ * W77Q_DUMP_CMD_READ_RAW — Read raw bytes from W77Q flash.
++ *
++ * params[0]: VALUE_INPUT   .a = byte offset into flash
++ * params[1]: MEMREF_INOUT  buffer; .size = bytes to read / actual on return
++ *
++ * Returns TEEC_SUCCESS on success.
++ */
++#define W77Q_DUMP_CMD_READ_RAW  1U
++
++/*
++ * W77Q_DUMP_CMD_WRITE_RAW — Write raw bytes to W77Q flash.
++ *
++ * params[0]: VALUE_INPUT   .a = byte offset into flash
++ * params[1]: MEMREF_INPUT  data to write (.size = byte count, max 65536)
++ *
++ * Returns TEEC_SUCCESS on success.
++ */
++#define W77Q_DUMP_CMD_WRITE_RAW  2U
++
++/*
++ * W77Q_DUMP_CMD_ERASE_SECTOR — Erase the 4 KB sector containing the offset.
++ *
++ * params[0]: VALUE_INPUT   .a = byte offset of (or within) the sector
++ *
++ * Returns TEEC_SUCCESS on success.
++ */
++#define W77Q_DUMP_CMD_ERASE_SECTOR  3U
++
++/*
++ * W77Q_DUMP_CMD_ERASE_CHIP — Erase all of W77Q section 1.
++ *
++ * No parameters.  Returns TEEC_SUCCESS on success.
++ */
++#define W77Q_DUMP_CMD_ERASE_CHIP  4U
++
++/*
++ * W77Q_DUMP_CMD_READ_PLAIN — Attempt to read flash WITHOUT authenticated session.
++ *
++ * Demonstrates that the W77Q hardware rejects unauthenticated reads when
++ * the section is configured with plainAccessReadEnable=0.
++ *
++ * params[0]: VALUE_INPUT   .a = byte offset into flash
++ * params[1]: MEMREF_INOUT  buffer; .size = bytes to read / actual on return
++ *
++ * Returns TEEC_SUCCESS if plain read worked, or error if hardware rejected it.
++ */
++#define W77Q_DUMP_CMD_READ_PLAIN  5U
++
++/*
++ * W77Q_DUMP_CMD_READ_FILE — Read a stored object's content through LittleFS.
++ *
++ * params[0]: MEMREF_INPUT  ta_uuid (16 bytes) || obj_id (variable length)
++ * params[1]: MEMREF_INOUT  output buffer; .size = capacity / actual on return
++ *
++ * Returns TEEC_SUCCESS on success.
++ */
++#define W77Q_DUMP_CMD_READ_FILE  6U
++
++/* Maximum object-ID string length (matches W77Q_OBJ_ID_MAX = 64) */
++#define W77Q_DUMP_OBJ_ID_MAX    64U
++
++/*
++ * One LUT entry as returned by W77Q_DUMP_CMD_LIST_ALL.
++ * Packed to 92 bytes: 16 + 4 + 4 + 4 + 64.
++ */
++struct w77q_dump_entry {
++	uint8_t  ta_uuid[16];             /* TA UUID of the owning TA       */
++	uint32_t flash_off;               /* byte offset in W77Q flash      */
++	uint32_t data_size;               /* payload bytes (excl. header)   */
++	uint32_t obj_id_len;              /* valid bytes in obj_id[]        */
++	uint8_t  obj_id[W77Q_DUMP_OBJ_ID_MAX]; /* raw object ID (may be binary) */
++} __attribute__((packed));
++
++/* Maximum entries in one LIST_ALL call (= W77Q_FS_MAX_LUT = 244) */
++#define W77Q_DUMP_MAX_ENTRIES   244U
++
++#endif /* W77Q_DUMP_TA_H */

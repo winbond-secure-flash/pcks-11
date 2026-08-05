@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Release Notes — W77Q/T PKCS#11</title>
+<link href="style.css" rel="stylesheet" type="text/css"/>
+</head>
+<body>
+
+<div id="titlearea">
+    <div>
+        <div id="projectname">W77Q/T PKCS#11 Secure Storage</div>
+        <div id="projectbrief">Release User Guide — Renesas R-Car V4H Sparrow Hawk</div>
+    </div>
+    <div id="projectlogo"><img alt="Winbond" src="winbond_logo.png"/></div>
+</div>
+
+<div id="nav-bar">
+    <a href="index.html">Home</a>
+    <a href="architecture.html">Architecture</a>
+    <a href="package-contents.html">Package Contents</a>
+    <a href="build-guide.html">Build</a>
+    <a href="flash-and-boot.html">Flash &amp; Boot</a>
+    <a href="pkcs11-usage.html">PKCS#11 Usage</a>
+    <a href="provisioning.html">Configuration</a>
+    <a href="testing.html">Testing</a>
+    <a href="security.html">CVE Disclaimer</a>
+    <a href="release-notes.html" class="active">Release Notes</a>
+</div>
+
+<div class="contents">
+
+<h1>Release Notes</h1>
+
+<h2>Version 0.1.0 (August 2026)</h2>
+
+<div class="warning">
+<strong>ALPHA RELEASE</strong> — This is a pre-production technology preview.
+APIs, flash layout, and provisioning flows may change without notice.
+</div>
+
+<h3>Overview</h3>
+<p>First alpha release of the W77Q/T PKCS#11 secure storage solution for the
+Renesas R-Car V4H Sparrow Hawk platform. This release demonstrates end-to-end
+key generation, storage, and cryptographic operations backed by Winbond W77Q/T
+secure NOR flash via OP-TEE.</p>
+
+<h3>Features</h3>
+<ul>
+    <li>PKCS#11 token operations via OP-TEE PKCS#11 TA with W77Q/T backend storage</li>
+    <li>RSA-2048/4096, EC P-256/P-384, AES-128/256, HMAC key generation and storage</li>
+    <li>Sign, verify, encrypt, decrypt operations through standard PKCS#11 interface</li>
+    <li>Persistent key storage on W77Q/T flash (survives reboot)</li>
+    <li>QLIB authenticated session protocol for data-at-rest protection</li>
+    <li>SPI RPC-IF driver for R-Car V4H ↔ W77Q/T communication</li>
+    <li>LIFEC hardware lockdown (SPI accessible only from Secure World)</li>
+    <li>Yocto/OE (scarthgap) build system with single-command build</li>
+    <li>Installation verification script (verify-install.sh)</li>
+    <li>Host-side and on-board integration test suite</li>
+</ul>
+
+<h3>Components</h3>
+<table>
+<tr><th>Component</th><th>Version</th></tr>
+<tr><td>OP-TEE OS</td><td>4.5.0 (commit 0919de0f)</td></tr>
+<tr><td>QLIB (libqlib.a)</td><td>v23.6, pinned commit 3e8223ce (prebuilt aarch64 binary; fetched from <a href="https://github.com/winbond-secure-flash/qlib-bin">github.com/winbond-secure-flash/qlib-bin</a>)</td></tr>
+<tr><td>LittleFS</td><td>Pinned commit 6cb4e865 (BSD-3-Clause; fetched from <a href="https://github.com/littlefs-project/littlefs">github.com/littlefs-project/littlefs</a>)</td></tr>
+<tr><td>Yocto / Poky</td><td>scarthgap</td></tr>
+<tr><td>Linux kernel</td><td>6.6.x (from BSP)</td></tr>
+<tr><td>TF-A (BL2/BL31)</td><td>From BSP (with RPC-IF patches)</td></tr>
+</table>
+
+<h3>Known Limitations</h3>
+<ol>
+    <li><strong>Development keys only</strong> — Sample keys are used for demonstration purposes.
+        Keys must be replaced with unique production keys to achieve security.</li>
+    <li><strong>LittleFS geometry lock-in</strong> — PKCS#11 data is tied to the configured
+        LittleFS geometry. If <code>W77Q_LFS_BLOCK_SIZE</code> or related layout parameters are
+        changed, the storage area must be reformatted before reuse.</li>
+    <li><strong>Section 1 sized to 16 MB</strong> — 16 MB of W77Q/T Section 1 is currently
+        mapped for PKCS#11 storage.</li>
+    <li><strong>No secure boot chain validation</strong> — BL2→BL31→OP-TEE chain of trust is
+        not enforced in this alpha (development mode).</li>
+    <li><strong>Single-board target</strong> — Only the Sparrow Hawk (R-Car V4H) board is supported.</li>
+</ol>
+
+<h3>Breaking Changes</h3>
+<p>N/A — first release.</p>
+
+<h3>Upgrade Notes</h3>
+<p>N/A — first release.</p>
+
+</div><!-- contents -->
+
+<div id="footer">
+    <strong>Copyright &copy; 2026 Winbond Electronics Corporation. All Rights Reserved.</strong>
+    | <a href="License.txt">License</a>
+    | <a href="ThirdPartyLicenses.txt">Third-Party Licenses</a>
+</div>
+
+</body>
+</html>

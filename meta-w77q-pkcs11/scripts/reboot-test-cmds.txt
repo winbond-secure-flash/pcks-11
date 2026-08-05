@@ -1,0 +1,16 @@
+# Reboot persistence test commands - copy one at a time
+
+# Step 1: Reboot
+/home/yuri/work_1702/meta-sparrow-hawk/scripts/serial-shell.py 'reboot'
+
+# Step 2: Check token (wait 30s after reboot)
+/home/yuri/work_1702/meta-sparrow-hawk/scripts/serial-shell.py 'pkcs11-tool --module=/usr/lib/libckteec.so -T'
+
+# Step 3: List keys
+/home/yuri/work_1702/meta-sparrow-hawk/scripts/serial-shell.py 'pkcs11-tool --module=/usr/lib/libckteec.so --token-label test-token --login --pin 876543210 --list-objects'
+
+# Step 4: Sign with persisted RSA key
+/home/yuri/work_1702/meta-sparrow-hawk/scripts/serial-shell.py 'echo "post-reboot test" > /tmp/reboot_test.txt && pkcs11-tool --module=/usr/lib/libckteec.so --token-label test-token --login --pin 876543210 --sign --mechanism SHA256-RSA-PKCS --input-file /tmp/reboot_test.txt --output-file /tmp/reboot_sig.bin --id 10'
+
+# Step 5: Verify signature
+/home/yuri/work_1702/meta-sparrow-hawk/scripts/serial-shell.py 'pkcs11-tool --module=/usr/lib/libckteec.so --token-label test-token --login --pin 876543210 --verify --mechanism SHA256-RSA-PKCS --input-file /tmp/reboot_test.txt --signature-file /tmp/reboot_sig.bin --id 10'

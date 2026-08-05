@@ -1,0 +1,57 @@
+From: Sparrow Hawk BSP <bsp@sparrow-hawk.local>
+Date: Mon, 24 Feb 2026 00:00:00 +0000
+Subject: [PATCH] board: renesas: gen4: add OP-TEE FIT loadable handler
+
+When booting from a FIT image that contains an OP-TEE (type="tee")
+loadable, U-Boot must populate bl32_ep_info in the
+bl2_to_bl31_params_mem structure at PARAMS_BASE so TF-A BL31 can
+initialise the OP-TEE Trusted Execution Environment.
+
+Signed-off-by: Sparrow Hawk BSP <bsp@sparrow-hawk.local>
+---
+ board/renesas/common/gen4-common.c | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/board/renesas/common/gen4-common.c b/board/renesas/common/gen4-common.c
+index 38fba7a5ea7..54dbb044206 100644
+--- a/board/renesas/common/gen4-common.c
++++ b/board/renesas/common/gen4-common.c
+@@ -165,6 +165,36 @@ static void tfa_bl31_image_process(ulong image, size_t size)
+ 
+ U_BOOT_FIT_LOADABLE_HANDLER(IH_TYPE_TFA_BL31, tfa_bl31_image_process);
+ 
++static void tee_image_process(ulong image, size_t size)
++{
++struct bl2_to_bl31_params_mem *blinfo =
++(struct bl2_to_bl31_params_mem *)PARAMS_BASE;
++
++/* Not in EL3, nothing to do */
++if (current_el() != 3)
++return;
++
++/* Populate BL32 (OP-TEE) entry point info for TF-A BL31 */
++blinfo->bl32_ep_info.h.type    = 1;/* PARAM_EP */
++blinfo->bl32_ep_info.h.version = 2;/* VERSION_2 */
++blinfo->bl32_ep_info.h.size    = sizeof(struct entry_point_info);
++blinfo->bl32_ep_info.h.attr    = 0;/* EP_SECURE */
++blinfo->bl32_ep_info.pc        = image;
++/* SPSR: AArch64, EL1h, all exceptions masked */
++blinfo->bl32_ep_info.spsr      = 0x3c5;
++
++/* Populate BL32 image info */
++blinfo->bl32_image_info.h.type    = 1;/* PARAM_IMAGE_BINARY */
++blinfo->bl32_image_info.h.version = 2;
++blinfo->bl32_image_info.h.size    = sizeof(struct tfa_image_info);
++blinfo->bl32_image_info.h.attr    = 0;
++blinfo->bl32_image_info.image_base  = image;
++blinfo->bl32_image_info.image_size  = size;
++blinfo->bl32_image_info.image_max_size = size;
++}
++
++U_BOOT_FIT_LOADABLE_HANDLER(IH_TYPE_TEE, tee_image_process);
++
+ void armv8_switch_to_el2_prep(u64 args, u64 mach_nr, u64 fdt_addr,
+       u64 arg4, u64 entry_point, u64 es_flag)
+ {
+-- 
+2.34.1

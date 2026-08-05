@@ -1,0 +1,43 @@
+From 404b23ed7c15cdecfc6d112c5b1268787e6f89d5 Mon Sep 17 00:00:00 2001
+From: Nadav <nbahana@winbond.com>
+Date: Wed, 27 May 2026 10:47:22 +0300
+Subject: [PATCH] ta: pkcs11: remove TA_FLAG_INSTANCE_KEEP_ALIVE
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Without this flag the PKCS#11 TA is destroyed as soon as the last
+session closes.  This allows the normal-world test harness to stop
+tee-supplicant, erase the W77Q flash partition, and restart — the TA
+will be freshly loaded on next access, reading the now-empty flash.
+
+With INSTANCE_KEEP_ALIVE the TA stays resident forever, serving stale
+RAM-cached token state even after the backing flash has been erased.
+
+Signed-off-by: Nadav Bahana <nadav.bahana@winbond.com>
+---
+ ta/pkcs11/src/user_ta_header_defines.h | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/ta/pkcs11/src/user_ta_header_defines.h b/ta/pkcs11/src/user_ta_header_defines.h
+index 4d468ca8e..e4ef542ab 100644
+--- a/ta/pkcs11/src/user_ta_header_defines.h
++++ b/ta/pkcs11/src/user_ta_header_defines.h
+@@ -11,8 +11,12 @@
+ #define TA_UUID				PKCS11_TA_UUID
+ 
+ #define TA_FLAGS			(TA_FLAG_SINGLE_INSTANCE | \
+-					 TA_FLAG_MULTI_SESSION | \
+-					 TA_FLAG_INSTANCE_KEEP_ALIVE)
++					 TA_FLAG_MULTI_SESSION)
++/* NOTE: INSTANCE_KEEP_ALIVE removed so that stopping tee-supplicant destroys
++ * the TA, allowing flash erase + clean reload without reboot.  For a
++ * production system with thousands of PKCS#11 calls per second, re-add
++ * TA_FLAG_INSTANCE_KEEP_ALIVE to avoid TA reload overhead on each idle gap.
++ */
+ 
+ #define TA_STACK_SIZE			(4 * 1024)
+ 
+-- 
+2.43.0
+

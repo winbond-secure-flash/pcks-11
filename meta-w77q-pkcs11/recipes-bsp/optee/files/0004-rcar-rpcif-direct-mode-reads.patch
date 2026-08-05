@@ -1,0 +1,190 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: meta-sparrow-hawk <meta-sparrow-hawk@example.com>
+Date: Fri, 01 Jan 2021 00:00:00 +0000
+Subject: [PATCH 4/4] rcar: rpcif: add direct-map read for QLIB device-info commands
+
+R-Car Gen4 RPC-IF returns 0x00 for all manual-mode reads (silicon
+errata).  QLIB device-info commands (RDID, RDSR, QLIB-proprietary
+responses) need actual read data.
+
+Add rcar_rpcif_cmd_read() which switches the controller to Direct
+Communication mode, drives the given opcode (with optional address
+phase and dummy cycles), and reads back bytes from the direct-
+communication window.  rpcif_direct_read() wraps it for the
+chip.direct_read callback (CMD-only, no address).
+
+Key: DRCMR/DRENR only latch in MD=0 (direct mode), so mode switch
+and rpcif_flush_cache() must happen BEFORE configuring those regs.
+
+Signed-off-by: meta-sparrow-hawk <meta-sparrow-hawk@example.com>
+---
+ core/drivers/spi/rcar_rpcif.c         | 82 ++++++++++++++++++++++++++++++++++++++++
+ core/include/drivers/rcar_rpcif.h     | 20 ++++++++
+ core/include/drivers/spi.h            |  9 ++++
+ 3 files changed, 111 insertions(+)
+
+diff --git a/core/include/drivers/spi.h b/core/include/drivers/spi.h
+index 1111111..2222222 100644
+--- a/core/include/drivers/spi.h
++++ b/core/include/drivers/spi.h
+@@ -24,6 +24,15 @@
+ struct spi_chip {
+ 	TEE_Result (*xfer)(struct spi_chip *chip, const uint8_t *tx,
+ 			   uint8_t *rx, size_t len, uint32_t flags);
++	/*
++	 * Direct-Communication mode read (R-Car Gen4 manual-mode errata:
++	 * SMRDR0 always returns 0x00 in manual mode for all RX transfers).
++	 * dummy_cycles: number of SPI clock cycles between command and data.
++	 */
++	TEE_Result (*direct_read)(struct spi_chip *chip, uint8_t cmd,
++				  uint32_t dummy_cycles,
++				  uint8_t *buf, size_t len);
++
+ };
+ 
+ /**
+
+diff --git a/core/include/drivers/rcar_rpcif.h b/core/include/drivers/rcar_rpcif.h
+index 1111111..2222222 100644
+--- a/core/include/drivers/rcar_rpcif.h
++++ b/core/include/drivers/rcar_rpcif.h
+@@ -57,4 +57,25 @@
+ TEE_Result rcar_rpcif_read(struct rcar_rpcif *r, uint32_t flash_addr,
+ 			   void *buf, size_t len);
+ 
++/**
++ * rcar_rpcif_cmd_read() - Direct-mode read: CMD [+ ADDR] [+ dummy] -> DATA.
++ *
++ * Generalised form of rpcif_direct_read() for QLIB proprietary commands
++ * that include an address phase (e.g. cmd=0x85, addr_nibbles=7 for 3-byte
++ * address) and/or dummy cycles.  In Direct Communication mode the RPC-IF
++ * sends: CS | CMD | [ADDR] | [dummy cycles] | DATA, with the address derived
++ * from the io_read8() offset in the flash window.
++ *
++ * @cmd:          SPI command opcode.
++ * @addr:         Address value sent after CMD (ignored if addr_nibbles==0).
++ * @addr_nibbles: DRENR ADE nibble mask (0=no addr, 7=24-bit, 15=32-bit).
++ * @dummy_cycles: Dummy SPI clock cycles between addr/cmd and data (0=none).
++ * @buf/len:      Output buffer.
++ */
++TEE_Result rcar_rpcif_cmd_read(struct rcar_rpcif *r,
++			       uint8_t cmd,
++			       uint32_t addr, uint32_t addr_nibbles,
++			       uint32_t dummy_cycles,
++			       uint8_t *buf, size_t len);
++
+ #endif /* __DRIVERS_RCAR_RPCIF_H */
+
+diff --git a/core/drivers/spi/rcar_rpcif.c b/core/drivers/spi/rcar_rpcif.c
+index 3333333..4444444 100644
+--- a/core/drivers/spi/rcar_rpcif.c
++++ b/core/drivers/spi/rcar_rpcif.c
+@@ -34,6 +34,7 @@
+ #define RPCIF_DRENR      0x01C  /* Direct read enable */
+ #define RPCIF_SMDRENR    0x064  /* Manual mode DDR enable (keep at 0) */
+ #define RPCIF_DRDRENR    0x05C  /* Direct read DDR enable (keep at 0) */
++#define RPCIF_DRDMCR     0x058  /* Direct read dummy cycle register */
+ #define RPCIF_PHYCNT     0x07C
+ #define RPCIF_PHYOFFSET1 0x080
+ #define RPCIF_PHYOFFSET2 0x084
+@@ -97,6 +98,7 @@
+ 
+ /* DRENR: direct-read enable (CDE=command, ADE=address nibble mask) */
+ #define DRENR_CDE        BIT(14)
++#define DRENR_DME        BIT(15)  /* dummy cycle enable */
+ #define DRENR_ADE(v)     (((uint32_t)(v) & 0xFU) << 8)
+ 
+ #define RPCIF_TEND_TIMEOUT_US 10000U
+@@ -224,6 +226,83 @@
+ 	return TEE_SUCCESS;
+ }
+ 
++/*
++ * rpcif_direct_read() - Simple CMD-only direct read (no address phase).
++ * Used for chip.direct_read callback: RDID, RDSR, QLIB OP0/OP2, etc.
++ * @dummy_cycles: clocks between CMD and data (0 = none; 8 for QLIB OP0).
++ */
++static TEE_Result rpcif_direct_read(struct spi_chip *chip, uint8_t cmd,
++				    uint32_t dummy_cycles,
++				    uint8_t *buf, size_t len)
++{
++	struct rcar_rpcif *r = container_of(chip, struct rcar_rpcif, chip);
++
++	return rcar_rpcif_cmd_read(r, cmd, 0, 0, dummy_cycles, buf, len);
++}
++
++/*
++ * rcar_rpcif_cmd_read() - Direct-mode read: CMD [+ADDR] [+dummy] -> DATA.
++ *
++ * R-Car Gen4 RPC-IF silicon errata: SMRDR0 always returns 0x00 in manual
++ * mode (CMNCR.MD=1) for ALL RX transfers.  Direct Communication mode
++ * (MD=0) reads correctly via the memory-mapped flash window.
++ *
++ * In Direct Communication mode the RPC-IF hardware automatically sends:
++ *   CS assert | CMD | [ADDR bytes (from io offset)] | [dummy cycles] | DATA
++ *
++ * @addr_nibbles: DRENR ADE field (0=no addr, 7=24-bit addr, 15=32-bit addr).
++ *   For QLIB 3-byte address commands use addr_nibbles=7, addr=<qlib_addr>.
++ * @dummy_cycles: SPI clock cycles between CMD/ADDR and data (0 = none).
++ */
++TEE_Result rcar_rpcif_cmd_read(struct rcar_rpcif *r,
++			       uint8_t cmd,
++			       uint32_t addr, uint32_t addr_nibbles,
++			       uint32_t dummy_cycles,
++			       uint8_t *buf, size_t len)
++{
++	vaddr_t dirmap = io_pa_or_va(&r->flash_base, SMALL_PAGE_SIZE);
++	uint32_t drenr = DRENR_CDE;
++	size_t i = 0;
++
++	if (!dirmap) {
++		EMSG("rcar_rpcif: flash window not mapped for cmd_read");
++		return TEE_ERROR_GENERIC;
++	}
++	/* Switch to direct mode first — DRCMR/DRENR only latch when MD=0 */
++	rpcif_write(r, RPCIF_CMNCR,
++		    CMNCR_SFDE | CMNCR_MOIIO_HIZ | CMNCR_IOFV_HIZ | CMNCR_BSZ(0));
++	rpcif_flush_cache(r);
++	/*
++	 * Disable burst pre-fetch for address-phase commands (READ_CR 0x85,
++	 * READ_NVCR 0xB5, etc.).  These commands return one byte per CMD+ADDR
++	 * transaction; burst reads fill the cache with 0xFF from floating
++	 * MISO after the first valid byte.  Commands without an address
++	 * phase (OP0, RDID) output multiple bytes sequentially and need
++	 * burst mode to capture all of them in a single SPI transaction.
++	 */
++	if (addr_nibbles)
++		rpcif_write(r, RPCIF_DRCR, DRCR_SSLN | DRCR_SSLE);
++	/* Configure command, address enable, dummy cycles */
++	rpcif_write(r, RPCIF_DRCMR,   DRCMR_CMD(cmd));
++	rpcif_write(r, RPCIF_DREAR,   0);
++	rpcif_write(r, RPCIF_DRDRENR, 0);
++	if (addr_nibbles)
++		drenr |= DRENR_ADE(addr_nibbles);
++	if (dummy_cycles > 0) {
++		rpcif_write(r, RPCIF_DRDMCR, (dummy_cycles - 1U) & 0x1FU);
++		drenr |= DRENR_DME;
++	}
++	rpcif_write(r, RPCIF_DRENR, drenr);
++	for (i = 0; i < len; i++)
++		buf[i] = io_read8(dirmap + addr + i);
++	/* Restore manual SPI mode */
++	rpcif_write(r, RPCIF_CMNCR,
++		    CMNCR_MD | CMNCR_SFDE | CMNCR_MOIIO_HIZ |
++		    CMNCR_IOFV_HIZ | CMNCR_BSZ(0));
++	rpcif_flush_cache(r);
++	return TEE_SUCCESS;
++}
++
+ TEE_Result rcar_rpcif_init(struct rcar_rpcif *r, paddr_t pa)
+ {
+ 	vaddr_t va = (vaddr_t)phys_to_virt_io(pa, RPCIF_MMIO_SIZE);
+@@ -235,6 +314,7 @@
+ 	r->base.pa = pa;
+ 	r->base.va = va;
+ 	r->chip.xfer = rpcif_xfer;
++	r->chip.direct_read = rpcif_direct_read;
+ 
+ 	{
+ 		vaddr_t fva = (vaddr_t)phys_to_virt_io(
+

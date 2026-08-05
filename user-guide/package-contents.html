@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Package Contents — W77Q/T PKCS#11</title>
+<link href="style.css" rel="stylesheet" type="text/css"/>
+</head>
+<body>
+
+<div id="titlearea">
+    <div>
+        <div id="projectname">W77Q/T PKCS#11 Secure Storage</div>
+        <div id="projectbrief">Release User Guide — Renesas R-Car V4H Sparrow Hawk</div>
+    </div>
+    <div id="projectlogo"><img alt="Winbond" src="winbond_logo.png"/></div>
+</div>
+
+<div id="nav-bar">
+    <a href="index.html">Home</a>
+    <a href="architecture.html">Architecture</a>
+    <a href="package-contents.html" class="active">Package Contents</a>
+    <a href="build-guide.html">Build</a>
+    <a href="flash-and-boot.html">Flash &amp; Boot</a>
+    <a href="pkcs11-usage.html">PKCS#11 Usage</a>
+    <a href="provisioning.html">Configuration</a>
+    <a href="testing.html">Testing</a>
+    <a href="security.html">CVE Disclaimer</a>
+    <a href="release-notes.html">Release Notes</a>
+</div>
+
+<div class="contents">
+
+<h1>Package Contents</h1>
+
+<h2>Top-Level Layout</h2>
+<table>
+<tr><th>Path</th><th>Description</th></tr>
+<tr><td><code>build.sh</code></td><td>Top-level build wrapper (delegates to <code>meta-w77q-pkcs11/build.sh</code>)</td></tr>
+<tr><td><code>user-guide/</code></td><td>This documentation</td></tr>
+<tr><td><code>meta-w77q-pkcs11/</code></td><td><strong>Main Winbond layer</strong> — W77Q/T/QLIB secure storage + PKCS#11 integration</td></tr>
+<tr><td><code>imports/meta-optee-pkcs11/</code></td><td>OP-TEE OS recipe with PKCS#11 TA (v4.5.0)</td></tr>
+<tr><td><code>w77q_renesas_rcar_v4h_bsp/</code></td><td>HW enablement: TF-A, U-Boot, OP-TEE client</td></tr>
+</table>
+
+<h2>meta-w77q-pkcs11 (Main Layer)</h2>
+<p>This is where all Winbond-specific code lives. It patches OP-TEE to replace
+the default storage backend with W77Q/T secure flash.</p>
+
+<table>
+<tr><th>Path</th><th>Purpose</th></tr>
+<tr><td><code>build.sh</code></td><td>Build orchestrator — wraps upstream BSP build, injects all layers</td></tr>
+<tr><td><code>recipes-bsp/qlib/qlib-bin_git.bb</code></td><td>Fetches prebuilt <code>libqlib.a</code> (aarch64) + public API headers from <a href="https://github.com/winbond-secure-flash/qlib-bin">qlib-bin</a> at build time</td></tr>
+<tr><td><code>conf/</code></td><td>Yocto layer configuration + build templates</td></tr>
+<tr><td><code>recipes-bsp/optee/optee-os_%.bbappend</code></td><td>Entry point: patches OP-TEE, enables <code>CFG_W77Q_FS=y</code>, and fetches pinned upstream LittleFS sources</td></tr>
+<tr><td><code>recipes-bsp/optee/files/*.patch</code></td><td>OP-TEE patches (SPI driver, W77Q/T driver, FS backend, QLIB wiring, PTAs)</td></tr>
+<tr><td><code>recipes-bsp/optee/files/qlib-tee/</code></td><td>QLIB ↔ OP-TEE glue: <code>qlib_platform.c</code>, <code>w77q_qlib.c</code>, <code>sub.mk</code></td></tr>
+<tr><td><code>recipes-bsp/optee/files/layer2_storage/</code></td><td>LittleFS backend: <code>tee_lfs_storage.c</code>, <code>tee_lfs_storage.h</code>, <code>w77q_lfs_port.c</code>, <code>w77q_lfs_port.h</code>, <code>lfs_w77q_cfg.h</code></td></tr>
+<tr><td><code>recipes-bsp/w77q-provision/</code></td><td>Normal-world provisioning CLI tool</td></tr>
+<tr><td><code>recipes-examples/pkcs11-app/</code></td><td>PKCS#11 demo application</td></tr>
+<tr><td><code>recipes-examples/tee-storage/</code></td><td>TEE persistent storage demo</td></tr>
+<tr><td><code>recipes-dev/</code></td><td>Development TAs (tee-demo, tee-storage-test)</td></tr>
+<tr><td><code>recipes-utils/pkcs11-tests/</code></td><td>Automated PKCS#11 test suite</td></tr>
+<tr><td><code>tests/</code></td><td>Host-side Python test scripts</td></tr>
+<tr><td><code>scripts/</code></td><td>Utility scripts (deploy, test runners)</td></tr>
+<tr><td><code>docs/</code></td><td>Design documents, data-flow diagrams, flash maps</td></tr>
+</table>
+
+<h2>meta-optee-pkcs11</h2>
+<p>Thin Yocto layer providing OP-TEE OS and examples recipes configured for PKCS#11.</p>
+<table>
+<tr><th>Path</th><th>Purpose</th></tr>
+<tr><td><code>recipes-bsp/optee/optee-os_git.bb</code></td><td>Builds OP-TEE OS with <code>CFG_PKCS11_TA=y</code></td></tr>
+<tr><td><code>recipes-bsp/optee/optee-examples_git.bb</code></td><td>OP-TEE example Trusted Applications</td></tr>
+<tr><td><code>recipes-core/images/</code></td><td>Image composition helpers</td></tr>
+<tr><td><code>conf/layer.conf</code></td><td>Layer registration</td></tr>
+</table>
+
+<h2>w77q_renesas_rcar_v4h_bsp</h2>
+<p>Hardware enablement layer for the Sparrow Hawk board's secure boot chain.</p>
+<table>
+<tr><th>Path</th><th>Purpose</th></tr>
+<tr><td><code>tee/recipes-tee/arm-trusted-firmware/</code></td><td>TF-A BL31 patch: RPC-IF clock init, pin-mux, LIFEC secure lock</td></tr>
+<tr><td><code>tee/recipes-tee/u-boot/</code></td><td>U-Boot patch: OP-TEE FIT loadable handler (BL32 handoff)</td></tr>
+<tr><td><code>tee/recipes-tee/optee/</code></td><td>OP-TEE client library + tee-supplicant systemd service</td></tr>
+<tr><td><code>scripts/</code></td><td>Deployment utilities (flash-mmc, deploy-flash-bin, serial-shell)</td></tr>
+<tr><td><code>README.md</code></td><td>Layer documentation</td></tr>
+</table>
+
+<h2>External Dependency (Not Included)</h2>
+<div class="note">
+<strong><code>meta-sparrow-hawk</code></strong> — the upstream community BSP — must be cloned
+separately. See the <a href="build-guide.html">Build Guide</a> for instructions.
+</div>
+
+<div class="note">
+<strong><code>littlefs</code></strong> — open-source filesystem library — is fetched automatically
+from GitHub during build by <code>optee-os_%.bbappend</code> at a pinned commit.
+</div>
+
+</div><!-- contents -->
+
+<div id="footer">
+    <strong>Copyright &copy; 2026 Winbond Electronics Corporation. All Rights Reserved.</strong>
+    | <a href="License.txt">License</a>
+    | <a href="ThirdPartyLicenses.txt">Third-Party Licenses</a>
+</div>
+
+</body>
+</html>

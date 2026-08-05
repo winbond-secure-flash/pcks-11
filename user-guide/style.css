@@ -1,0 +1,193 @@
+/* W77Q PKCS#11 User Guide — Custom Stylesheet
+ * Matches Winbond QLIB library documentation visual style.
+ * Copyright (c) 2026 Winbond Electronics Corporation.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Source+Sans+Pro:wght@200;300;400;600&display=swap');
+
+/* ---- Reset & Base ---- */
+* { box-sizing: border-box; }
+body {
+    background-color: #fff;
+    margin: 0;
+    padding: 0;
+    font-family: "Segoe UI", "Source Sans Pro", Helvetica, Arial, sans-serif;
+    color: #111;
+    font-size: 15px;
+    line-height: 1.7;
+}
+
+/* ---- Header / Title Bar ---- */
+#titlearea {
+    background: #fff;
+    border-bottom: 2px solid #00aff0;
+    padding: 1em 2em;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+#titlearea #projectname {
+    color: #00aff0;
+    font-family: "Segoe UI Light", "Source Sans Pro", sans-serif;
+    font-weight: 300;
+    font-size: 1.8em;
+    margin: 0;
+}
+#titlearea #projectbrief {
+    color: #16499a;
+    font-size: 0.95em;
+    margin-top: 0.2em;
+}
+#titlearea #projectlogo img {
+    height: 53px;
+}
+
+/* ---- Navigation Bar ---- */
+#nav-bar {
+    background: #16499a;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+}
+#nav-bar a {
+    color: #fff;
+    text-decoration: none;
+    padding: 0.7em 1.3em;
+    font-size: 0.9em;
+    font-weight: 400;
+    transition: background 0.2s;
+}
+#nav-bar a:hover,
+#nav-bar a.active {
+    background: #00aff0;
+}
+
+/* ---- Content Area ---- */
+.contents {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 2em 2.5em;
+}
+
+/* ---- Headings ---- */
+h1, h2, h3, h4 {
+    font-family: "Segoe UI Light", "Source Sans Pro", sans-serif;
+    font-weight: 200;
+    color: #000;
+    margin: 1.5em 0 0.4em 0;
+}
+h1 {
+    font-size: 2.2em;
+    line-height: 1.2;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 0.3em;
+}
+h2 {
+    font-size: 1.6em;
+    line-height: 1.3;
+}
+h3 {
+    font-size: 1.2em;
+    font-weight: 400;
+    color: #333;
+}
+
+/* ---- Code ---- */
+code, pre, kbd, samp {
+    font-family: Consolas, 'Courier New', monospace;
+    font-size: 0.9em;
+}
+code {
+    background: #f4f7fa;
+    padding: 0.15em 0.4em;
+    border-radius: 3px;
+    border: 1px solid #e8ecf0;
+}
+pre {
+    background: #f4f7fa;
+    border: 1px solid #dde3e8;
+    border-radius: 4px;
+    padding: 1em 1.2em;
+    overflow-x: auto;
+    line-height: 1.5;
+}
+pre code {
+    background: none;
+    border: none;
+    padding: 0;
+}
+
+/* ---- Tables ---- */
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1em 0;
+    font-size: 0.95em;
+}
+th, td {
+    border: 1px solid #dde3e8;
+    padding: 0.55em 0.8em;
+    text-align: left;
+    vertical-align: top;
+}
+th {
+    background: #f4f7fa;
+    font-weight: 600;
+    color: #16499a;
+}
+tr:nth-child(even) { background: #fafbfc; }
+
+/* ---- Callouts ---- */
+.note {
+    background: #fff8e1;
+    border-left: 4px solid #ffc107;
+    padding: 0.8em 1em;
+    margin: 1.2em 0;
+    border-radius: 3px;
+}
+.warning {
+    background: #fbe9e7;
+    border-left: 4px solid #e53935;
+    padding: 0.8em 1em;
+    margin: 1.2em 0;
+    border-radius: 3px;
+}
+.info {
+    background: #e3f2fd;
+    border-left: 4px solid #1976d2;
+    padding: 0.8em 1em;
+    margin: 1.2em 0;
+    border-radius: 3px;
+}
+
+/* ---- Diagrams (preformatted) ---- */
+.diagram {
+    background: #f4f7fa;
+    border: 1px solid #dde3e8;
+    padding: 1.2em;
+    font-family: Consolas, monospace;
+    font-size: 0.85em;
+    white-space: pre;
+    overflow-x: auto;
+    border-radius: 4px;
+    line-height: 1.4;
+}
+
+/* ---- Links ---- */
+a { color: #16499a; text-decoration: none; }
+a:hover { text-decoration: underline; color: #00aff0; }
+
+/* ---- Lists ---- */
+ol, ul { padding-left: 1.5em; }
+li { margin-bottom: 0.3em; }
+
+/* ---- Footer ---- */
+#footer {
+    border-top: 1px solid #dde3e8;
+    padding: 1.5em 2em;
+    text-align: center;
+    font-size: 0.85em;
+    color: #666;
+    margin-top: 3em;
+}

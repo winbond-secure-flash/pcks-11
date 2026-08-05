@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>CVE Disclaimer — W77Q/T PKCS#11</title>
+<link href="style.css" rel="stylesheet" type="text/css"/>
+</head>
+<body>
+
+<div id="titlearea">
+    <div>
+        <div id="projectname">W77Q/T PKCS#11 Secure Storage</div>
+        <div id="projectbrief">Release User Guide — Renesas R-Car V4H Sparrow Hawk</div>
+    </div>
+    <div id="projectlogo"><img alt="Winbond" src="winbond_logo.png"/></div>
+</div>
+
+<div id="nav-bar">
+    <a href="index.html">Home</a>
+    <a href="architecture.html">Architecture</a>
+    <a href="package-contents.html">Package Contents</a>
+    <a href="build-guide.html">Build</a>
+    <a href="flash-and-boot.html">Flash &amp; Boot</a>
+    <a href="pkcs11-usage.html">PKCS#11 Usage</a>
+    <a href="provisioning.html">Configuration</a>
+    <a href="testing.html">Testing</a>
+    <a href="security.html" class="active">CVE Disclaimer</a>
+    <a href="release-notes.html">Release Notes</a>
+</div>
+
+<div class="contents">
+
+<h1>CVE Disclaimer</h1>
+
+<div class="warning">
+<strong>Note:</strong> This is an alpha release provided for evaluation purposes.
+Security hardening is ongoing. One known critical issue (CVE-2025-10263, Arm TLBI
+errata) remains open and requires SoC-vendor coordination to resolve.
+</div>
+
+<div class="warning">
+<strong>DISCLAIMER:</strong> This release package is provided as a reference sample.
+Winbond has performed CVE cleanup of its source code as described below.
+Winbond does <strong>not</strong> accept responsibility for any vulnerabilities
+discovered after the CVE cleanup date. It is the customer's (integrator's)
+responsibility to perform their own security assessment and to track, mitigate,
+and patch any CVEs that may be disclosed in the future — both in Winbond-provided
+sample code and in all third-party components integrated into the final product.
+</div>
+
+<h2>CVE Cleanup Completion</h2>
+
+<p><strong>CVE cleanup date:</strong> 2026-07-12</p>
+
+<p>As of the above date, Winbond has reviewed and resolved all publicly known CVEs
+(per NVD / MITRE / vendor advisories) affecting the Winbond-authored source code
+in this release package. This date does <em>not</em> represent a guarantee that
+the code is free of vulnerabilities — it marks the point at which all
+<em>known</em> CVEs were addressed.</p>
+
+<h2>Scanning Methodology</h2>
+
+<p>The following methods were used to identify and resolve known CVEs in the
+Winbond-authored source code:</p>
+
+<ol>
+    <li><strong>Yocto CVE Check (<code>cve-check</code> class):</strong>
+        The Yocto build system's built-in CVE scanner was executed against all
+        recipes in the image. This tool cross-references each package version
+        against the NIST NVD database and generates per-recipe CVE status reports.
+        <pre>INHERIT += "cve-check"</pre>
+    </li>
+    <li><strong>Static Analysis / SAST:</strong>
+        Winbond-authored C source code was scanned using static analysis tools
+        to identify potential memory safety issues (buffer overflows, out-of-bounds
+        access, use-after-free) and other CWE patterns commonly associated with
+        PKCS#11 ecosystem vulnerabilities.
+    </li>
+    <li><strong>NVD / GitHub Advisory Database Review:</strong>
+        Manual review of the NIST National Vulnerability Database and GitHub
+        Security Advisories (GHSA) for all components and their pinned versions
+        included in this release, specifically targeting:
+        <ul>
+            <li>OP-TEE PKCS#11 TA advisories</li>
+            <li>OpenSC / libckteec advisories</li>
+            <li>openCryptoki advisories</li>
+            <li>GnuTLS PKCS#11-related advisories</li>
+        </ul>
+    </li>
+    <li><strong>Dependency Version Audit:</strong>
+        All pinned third-party component versions were checked against their
+        respective upstream security advisories and changelogs to confirm no
+        unpatched CVEs exist at the time of cleanup.
+    </li>
+</ol>
+
+<h2>Repositories in Scope</h2>
+
+<p>The CVE cleanup was performed on the following Winbond-maintained repositories
+included in this release:</p>
+
+<table>
+<tr><th>Repository</th><th>Description</th><th>Scan Scope</th></tr>
+<tr>
+    <td><code>meta-w77q-pkcs11</code></td>
+    <td>Yocto layer — W77Q PKCS#11 recipes, tee_lfs_storage, w77q_lfs_port, w77q_qlib, qlib_platform, provisioning tool</td>
+    <td>All Winbond-authored recipes and source</td>
+</tr>
+<tr>
+    <td><code>w77q_renesas_rcar_v4h_bsp</code></td>
+    <td>BSP integration scripts and TEE configuration for Renesas R-Car V4H</td>
+    <td>All Winbond-authored scripts and configuration</td>
+</tr>
+<tr>
+    <td><code>imports/meta-optee-pkcs11</code></td>
+    <td>Yocto layer — OP-TEE OS and PKCS#11 TA build recipes</td>
+    <td>Recipe patches and configuration authored by Winbond; upstream OP-TEE source is customer responsibility</td>
+</tr>
+<tr>
+    <td><code>imports/meta-sparrow-hawk</code></td>
+    <td>Yocto BSP layer — Renesas R-Car V4H (Sparrow Hawk) platform support</td>
+    <td>Recipe patches and configuration authored by Winbond; upstream BSP components are customer responsibility</td>
+</tr>
+</table>
+
+<h2>Scope of Responsibility</h2>
+
+<table>
+<tr><th>Component</th><th>Owner</th><th>CVE Responsibility</th></tr>
+<tr><td><code>meta-w77q-pkcs11</code> (recipes, tee_lfs_storage, w77q_lfs_port, w77q_qlib, qlib_platform)</td><td>Winbond</td><td>Winbond (up to cleanup date only)</td></tr>
+<tr><td><code>libqlib.a</code> (prebuilt library)</td><td>Winbond</td><td>Winbond (up to cleanup date only)</td></tr>
+<tr><td><code>w77q-provision</code> tool</td><td>Winbond</td><td>Winbond (up to cleanup date only)</td></tr>
+<tr><td>OP-TEE OS &amp; PKCS#11 TA (<code>meta-optee-pkcs11</code>)</td><td>Linaro / OP-TEE project</td><td>Customer / Integrator</td></tr>
+<tr><td>Trusted Firmware-A (BL2, BL31)</td><td>TF-A project</td><td>Customer / Integrator</td></tr>
+<tr><td>U-Boot</td><td>U-Boot project</td><td>Customer / Integrator</td></tr>
+<tr><td>Linux kernel &amp; drivers</td><td>Renesas / kernel.org</td><td>Customer / Integrator</td></tr>
+<tr><td>Yocto / Poky / OpenEmbedded</td><td>Yocto Project</td><td>Customer / Integrator</td></tr>
+<tr><td>OpenSC / libckteec / pkcs11-tool</td><td>Respective upstream</td><td>Customer / Integrator</td></tr>
+</table>
+
+<h2>Customer Responsibilities</h2>
+
+<div class="warning">
+<strong>Important:</strong> Once the customer uses this sample code in a product,
+the customer assumes full responsibility for ongoing security maintenance, including:
+</div>
+<ul>
+    <li>Performing independent CVE scans on the final production image</li>
+    <li>Tracking CVEs disclosed after the cleanup date for all components (including Winbond-authored code)</li>
+    <li>Applying upstream security patches to OP-TEE, TF-A, U-Boot, Linux, and Yocto layers</li>
+    <li>Running <code>cve-check</code> in Yocto on every production build</li>
+    <li>Monitoring NVD, GitHub Security Advisories, and vendor mailing lists for new disclosures</li>
+    <li>Validating that updated components remain compatible with Winbond layers before deployment</li>
+    <li>Maintaining a Software Bill of Materials (SBOM) for regulatory compliance</li>
+</ul>
+
+<h2>Findings Resolved</h2>
+
+<p>The following security issues were identified and resolved during the cleanup process
+(details in <code>cve-findings.md</code>):</p>
+
+<table>
+<tr><th>#</th><th>Severity</th><th>Issue</th><th>Resolution</th></tr>
+<tr><td>2.1</td><td>HIGH</td><td>OOB read in <code>rpcifFlashRead_L</code></td><td>Bounds check added</td></tr>
+<tr><td>2.2</td><td>HIGH</td><td>OOB read in <code>rpcifCmdRead_L</code></td><td>Bounds check added</td></tr>
+<tr><td>2.3</td><td>HIGH</td><td>Off-by-one in <code>pkcs11-demo.c</code></td><td>Removed NUL write, use <code>%.*s</code></td></tr>
+<tr><td>2.4</td><td>MEDIUM</td><td>Size truncation in <code>w77q_read/write</code></td><td><code>UINT32_MAX</code> guard added</td></tr>
+<tr><td>2.5</td><td>MEDIUM</td><td><code>PLAT_HASH_Finish</code> buffer size</td><td>Accepted (QLIB API contract); <code>_Static_assert</code> added</td></tr>
+<tr><td>2.6</td><td>MEDIUM</td><td>Integer overflow in legacy <code>w77q_fs_write_L</code> (pre-LittleFS)</td><td>Overflow check added</td></tr>
+<tr><td>2.7</td><td>MEDIUM</td><td>Flash data size trusted for malloc</td><td>Validation against <code>total_size</code> added</td></tr>
+<tr><td>2.8</td><td>MEDIUM</td><td>Provision PTA re-call</td><td>Accepted risk (re-provision = data loss; DoS only)</td></tr>
+<tr><td>2.9</td><td>LOW</td><td>Key material printed to stdout</td><td>Print calls removed</td></tr>
+<tr><td>2.10</td><td>LOW</td><td><code>memset</code> optimized out</td><td>Replaced with <code>explicit_bzero</code></td></tr>
+<tr><td>2.11</td><td>LOW</td><td>Missing return checks in <code>bridge_init</code></td><td>Error checks with cleanup added</td></tr>
+<tr><td>2.12</td><td>LOW</td><td>Memory leak in <code>bridge_open</code></td><td><code>kfree</code> on error path</td></tr>
+</table>
+
+<h2>Known CVE Landscape (at time of release)</h2>
+
+<p>For reference, the following categories of CVEs are known to affect the broader
+PKCS#11 ecosystem. These were considered during the cleanup process:</p>
+
+<table>
+<tr><th>Category</th><th>Examples</th><th>Mitigation Status</th></tr>
+<tr>
+    <td>OP-TEE PKCS#11 TA memory safety</td>
+    <td>CVE-2026-33317 (OOB read/write in attribute handler, CVSS 8.7)</td>
+    <td><strong>FIXED.</strong> Cherry-pick patches 0010–0012 applied to OP-TEE v4.5.0
+        (commits <code>e031c4e5</code>, <code>16926d5a</code>, <code>149e8d7e</code>).</td>
+</tr>
+<tr>
+    <td>OP-TEE PKCS#11 TA recursion DoS</td>
+    <td>CVE-2026-41434 (unbounded indirect attribute recursion, CVSS 3.3)</td>
+    <td><strong>FIXED.</strong> Cherry-pick patch 0013 applied to OP-TEE v4.5.0
+        (commit <code>eb314516</code>).</td>
+</tr>
+<tr>
+    <td>OP-TEE ECDH invalid curve attack</td>
+    <td>CVE-2026-45614 (ECC public key not validated on curve, CVSS 4.7)</td>
+    <td><strong>NOT FIXED (alpha).</strong> Patch has complex dependencies on
+        intermediate OP-TEE commits. Will be resolved by upgrading to OP-TEE
+        &ge;4.11.0 in a future release. Risk: attacker with PKCS#11 ECDH session
+        can recover private key via repeated invalid-curve derivations.</td>
+</tr>
+<tr>
+    <td>OP-TEE core mobj reference leak</td>
+    <td>CVE-2026-42546 (cleanup_shm_refs attribute masking, CVSS 3.3)</td>
+    <td><strong>FIXED.</strong> Cherry-pick patch 0015 applied to OP-TEE v4.5.0
+        (commit <code>51d99cd2</code>).</td>
+</tr>
+<tr>
+    <td>Arm CPU speculative execution (TLBI)</td>
+    <td>CVE-2025-10263 (TLBI may not apply to all PEs, CVSS 9.3)</td>
+    <td><strong>CUSTOMER / RENESAS RESPONSIBILITY.</strong> This is an Arm Cortex-A76
+        CPU errata affecting the R-Car V4H SoC. Mitigation requires firmware
+        patches in TF-A, OP-TEE, and the Linux kernel, coordinated with the SoC
+        vendor (Renesas). The customer/integrator must apply the appropriate
+        errata workarounds for their production BSP. See
+        <a href="https://developer.arm.com/Arm%20Security%20Center/Arm%20CPU%20Vulnerability%20-%20TLBI">Arm Security Advisory</a>.</td>
+</tr>
+<tr>
+    <td>OpenSC smart card driver issues</td>
+    <td>110+ CVEs (buffer overflows, PIN bypass)</td>
+    <td>Pinned to patched version; customer must update for future disclosures</td>
+</tr>
+<tr>
+    <td>Timing side-channels (Bleichenbacher / Minerva / Marvin)</td>
+    <td>CVE-2023-5992, CVE-2024-28834, CVE-2024-0914</td>
+    <td>Addressed in pinned library versions; architectural concern remains</td>
+</tr>
+<tr>
+    <td>Authentication bypass (PAM)</td>
+    <td>CVE-2025-24531, CVE-2025-24032</td>
+    <td>Not applicable to this release (no pam_pkcs11 in target image)</td>
+</tr>
+</table>
+
+<h2>Reporting Vulnerabilities</h2>
+<p>To report a security issue in Winbond-authored code, visit:</p>
+<ul>
+    <li><a href="https://www.winbond.com/hq/support/security-issue-support/?__locale=en">Winbond Security Issue Support</a></li>
+</ul>
+
+</div><!-- contents -->
+
+<div id="footer">
+    <strong>Copyright &copy; 2026 Winbond Electronics Corporation. All Rights Reserved.</strong>
+    | <a href="License.txt">License</a>
+    | <a href="ThirdPartyLicenses.txt">Third-Party Licenses</a>
+</div>
+
+</body>
+</html>

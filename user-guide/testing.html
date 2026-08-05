@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Testing — W77Q/T PKCS#11</title>
+<link href="style.css" rel="stylesheet" type="text/css"/>
+</head>
+<body>
+
+<div id="titlearea">
+    <div>
+        <div id="projectname">W77Q/T PKCS#11 Secure Storage</div>
+        <div id="projectbrief">Release User Guide — Renesas R-Car V4H Sparrow Hawk</div>
+    </div>
+    <div id="projectlogo"><img alt="Winbond" src="winbond_logo.png"/></div>
+</div>
+
+<div id="nav-bar">
+    <a href="index.html">Home</a>
+    <a href="architecture.html">Architecture</a>
+    <a href="package-contents.html">Package Contents</a>
+    <a href="build-guide.html">Build</a>
+    <a href="flash-and-boot.html">Flash &amp; Boot</a>
+    <a href="pkcs11-usage.html">PKCS#11 Usage</a>
+    <a href="provisioning.html">Configuration</a>
+    <a href="testing.html" class="active">Testing</a>
+    <a href="security.html">CVE Disclaimer</a>
+    <a href="release-notes.html">Release Notes</a>
+</div>
+
+<div class="contents">
+
+<h1>Testing</h1>
+
+<h2>Test Scope</h2>
+<p>This project tests the <strong>QLIB ↔ OP-TEE integration and the secure storage data path</strong>.
+The boundary is clearly defined:</p>
+
+<table>
+<tr><th>In Scope (Winbond tests)</th><th>Out of Scope (upstream / customer)</th></tr>
+<tr><td>QLIB authenticated session (connect, load key, open session)</td><td>PKCS#11 TA crypto correctness (RSA/EC math)</td></tr>
+<tr><td>LittleFS backend (mount, write, read, delete, reboot recovery, format-on-first-boot)</td><td>OP-TEE kernel integrity &amp; isolation</td></tr>
+<tr><td>PKCS#11 token init → keygen → sign → verify via W77Q/T backend</td><td>TF-A (BL2/BL31) secure boot validation</td></tr>
+<tr><td>Data persistence across reboot and tee-supplicant restart</td><td>Linux kernel / driver security</td></tr>
+<tr><td>Flash wear &amp; sector-level data correctness</td><td>U-Boot chain of trust</td></tr>
+<tr><td>SPI bus correctness (RPC-IF register access)</td><td>Network/application-layer security</td></tr>
+</table>
+
+<h2>Installation Verification</h2>
+<p>After flashing a board for the first time (or after a major update), run the
+<strong>stage-by-stage installation check</strong> to confirm every layer of the stack is operational:</p>
+
+<pre>
+# On the target board:
+verify-install.sh
+# or with detailed output:
+verify-install.sh --verbose
+</pre>
+
+<p>The script checks 7 stages in order and stops reporting useful diagnostics at the first failure:</p>
+
+<table>
+<tr><th>Stage</th><th>Check</th><th>What a Failure Means</th></tr>
+<tr><td>1</td><td>OP-TEE device (<code>/dev/tee0</code>)</td><td>BL32 did not load — check BL31→BL32 handoff, DTB</td></tr>
+<tr><td>2</td><td>tee-supplicant running</td><td>Daemon not started — check systemd service</td></tr>
+<tr><td>3</td><td>libckteec.so present</td><td>optee-client not installed — rebuild rootfs</td></tr>
+<tr><td>4</td><td>PKCS#11 TA deployed</td><td>TA binary missing — check optee-os build</td></tr>
+<tr><td>5</td><td>Slot enumeration</td><td>TA won't load — check tee-supplicant logs</td></tr>
+<tr><td>6</td><td>W77Q/T flash reachable (QLIB connect)</td><td>SPI/LIFEC issue or keys not provisioned</td></tr>
+<tr><td>7</td><td>Key generation (full path)</td><td>Storage path broken — check dmesg for OP-TEE panics</td></tr>
+</table>
+
+<div class="info">
+<strong>Rule of thumb:</strong> Fix the first failing stage before investigating later ones.
+Each stage depends on the previous stages being functional.
+</div>
+
+<h2>Test Categories</h2>
+
+<h3>1. Host-Side Functional Tests (<code>tests/host/</code>)</h3>
+<p>Python scripts run from a host PC connected to the board via serial. Each <code>ftNN.py</code>
+drives an end-to-end scenario and collects PASS/FAIL results.</p>
+
+<table>
+<tr><th>Test</th><th>Description</th><th>Timeout</th></tr>
+<tr><td>FT9</td><td>PKCS#11 write → w77q-dump LUT delta</td><td>3 min</td></tr>
+<tr><td>FT10</td><td>PKCS#11 write + read round-trip</td><td>3 min</td></tr>
+<tr><td>FT11</td><td>PKCS#11 + tee-storage cross-validation</td><td>3 min</td></tr>
+<tr><td>FT12</td><td>PKCS#11 write + flash sector scan</td><td>3 min</td></tr>
+<tr><td>FT13</td><td>Persistence across tee-supplicant restart</td><td>4 min</td></tr>
+<tr><td>FT16</td><td>PKCS#11 write → LUT delta (detailed)</td><td>4 min</td></tr>
+<tr><td>FT17</td><td>25× tee-demo wear test</td><td>8 min</td></tr>
+<tr><td>FT18</td><td>pkcs11-demo RSA/EC/AES/RNG + flash delta</td><td>8 min</td></tr>
+<tr><td>FT19</td><td>RSA TEE keygen + encrypt + TEE decrypt</td><td>6 min</td></tr>
+<tr><td>FT20</td><td>Full flash compare around pkcs11-demo</td><td>8 min</td></tr>
+<tr><td>FT21</td><td>Power-loss recovery (manual intervention)</td><td>manual</td></tr>
+<tr><td>FT22</td><td>W77Q/T storage path across multiple PKCS#11 mechanisms (RSA/EC/AES/HMAC/RNG)</td><td>12 min</td></tr>
+<tr><td>FT23</td><td>W77Q/T LUT integrity validation</td><td>5 min</td></tr>
+<tr><td>FT24</td><td>W77Q/T data-at-rest protection verification</td><td>6 min</td></tr>
+<tr><td>FT25</td><td>Hybrid AES+RSA encrypt/decrypt (1 KB–10 MB)</td><td>10 min</td></tr>
+<tr><td>FT26</td><td>W77Q/T integration: object search, attributes, persistence</td><td>15 min</td></tr>
+</table>
+
+<h3>2. On-Board Target Scripts (<code>tests/target/</code>)</h3>
+<p>Shell scripts executed directly on the Sparrow Hawk board. Each <code>ftNN-target.sh</code>
+is the on-board counterpart invoked by the host-side test. Common helpers are in <code>common.sh</code>.</p>
+<pre>
+# Run all target tests on-board:
+/usr/bin/run-all-tests.sh
+</pre>
+
+<h3>3. PKCS#11 Smoke Tests (<code>tests/pkcs11/</code>)</h3>
+<p>Deployed to <code>/usr/bin/</code> on the target rootfs by the <code>pkcs11-tests</code> recipe.</p>
+
+<table>
+<tr><th>Script</th><th>Purpose</th></tr>
+<tr><td><code>check-pkcs11.sh</code></td><td>Full PKCS#11 smoke test: token init → RSA-2048 keygen → sign → verify → EC P-256 keygen → AES-128 keygen → encrypt → decrypt → cleanup</td></tr>
+<tr><td><code>check-tee-storage.sh</code></td><td>TEE secure-storage read/write/delete smoke test</td></tr>
+<tr><td><code>pkcs-test-menu.sh</code></td><td>Interactive menu to run individual PKCS#11 checks</td></tr>
+<tr><td><code>pkcs11-rsa-sign-recover.sh</code></td><td>RSA sign + recover round-trip test</td></tr>
+</table>
+
+<h2>Running the Full Suite</h2>
+
+<h3>From a host PC (recommended)</h3>
+<pre>
+# Connect to board via serial, run all tests, produce JUnit XML:
+python3 tests/host/run_integration_suite.py \
+    --port /dev/ttyUSB0 \
+    --deploy \
+    --output test-results.xml
+</pre>
+
+<h3>Subset / skip specific tests</h3>
+<pre>
+# Run only PKCS#11-specific tests:
+python3 tests/host/run_integration_suite.py --tests FT22,FT25,FT26
+
+# Skip the slow RSA-4096 test:
+python3 tests/host/run_integration_suite.py --no-rsa4096
+</pre>
+
+<h3>On-board quick check</h3>
+<pre>
+# SSH to the board and run the smoke test:
+check-pkcs11.sh
+</pre>
+
+<h2>Test Output</h2>
+<p>The integration suite produces a <strong>JUnit XML</strong> report (<code>test-results.xml</code>)
+compatible with CI systems (GitLab, Jenkins). Each test case has PASS/FAIL status,
+duration, and stdout/stderr capture for diagnosis.</p>
+
+<h2>What a PASS Means</h2>
+<div class="info">
+A passing test suite confirms:
+<ul>
+    <li>QLIB can establish an authenticated session with the W77Q/T chip</li>
+    <li>The LittleFS backend correctly mounts and preserves read/write/delete behavior across reboot scenarios</li>
+    <li>PKCS#11 objects (keys, certificates) survive reboots</li>
+    <li>Flash block allocation and wear-leveling behavior remain consistent with configured LittleFS geometry</li>
+    <li>The SPI bus operates correctly at the register level</li>
+</ul>
+It does <strong>not</strong> certify the cryptographic correctness of upstream OP-TEE algorithms,
+nor does it validate secure boot or Linux kernel integrity.
+</div>
+
+</div><!-- contents -->
+
+<div id="footer">
+    <strong>Copyright &copy; 2026 Winbond Electronics Corporation. All Rights Reserved.</strong>
+    | <a href="License.txt">License</a>
+    | <a href="ThirdPartyLicenses.txt">Third-Party Licenses</a>
+</div>
+
+</body>
+</html>

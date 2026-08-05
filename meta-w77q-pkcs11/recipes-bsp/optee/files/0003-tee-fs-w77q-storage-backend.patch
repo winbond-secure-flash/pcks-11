@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000003 Mon Sep 17 00:00:00 2001
+From: Sparrow Hawk BSP <bsp@sparrow-hawk>
+Date: Wed, 01 Jan 2025 00:00:00 +0000
+Subject: [PATCH 3/3] tee/fs: wire W77Q LittleFS storage backend into build
+
+Wire the LittleFS-based secure-storage backend into the OP-TEE build
+system.  The backend replaces REE_FS/RPMB_FS with a direct secure-world
+driver that reads/writes the W77Q SPI NOR flash via the RPC-IF driver.
+
+The source files (tee_lfs_storage.c/.h, lfs.c/.h, lfs_util.c/.h,
+lfs_w77q_cfg.h, w77q_lfs_port.c/.h) are supplied by the Yocto recipe
+and installed into core/tee/ before compilation.  This patch adds only
+the Kconfig/sub.mk plumbing and the tee_fs.h declaration needed to
+activate the backend.
+
+On-flash design: LittleFS v2.11 with secure-erase on block reclaim.
+
+Signed-off-by: Sparrow Hawk BSP <bsp@sparrow-hawk>
+---
+ core/arch/arm/plat-rcar/conf.mk | 12 ++++++++++++
+ core/include/tee/tee_fs.h       |  8 ++++++++
+ core/tee/sub.mk                 |  4 ++++
+ 3 files changed, 24 insertions(+)
+
+diff --git a/core/arch/arm/plat-rcar/conf.mk b/core/arch/arm/plat-rcar/conf.mk
+index aaaaaa2..aaaaaad 100644
+--- a/core/arch/arm/plat-rcar/conf.mk
++++ b/core/arch/arm/plat-rcar/conf.mk
+@@ -52,4 +52,14 @@
+ $(call force,CFG_DRIVERS_SPI,y)
+ CFG_RPCIF_BASE ?= 0xEE200000
+ CFG_RPCIF_FLASH_BASE ?= 0x08000000
+ endif
++
++# W77Q secure flash storage backend (replaces REE_FS).
++# Automatically enabled when CFG_RCAR_RPCIF_SPI=y.
++ifeq ($(CFG_W77Q_FS),y)
++$(call force,CFG_W77Q,y)
++$(call force,CFG_RCAR_RPCIF_SPI,y)
++$(call force,CFG_REE_FS,n)
++$(call force,CFG_RPMB_FS,n)
++CFG_W77Q_PART_OFFSET ?= 0x200000
++endif
+diff --git a/core/tee/sub.mk b/core/tee/sub.mk
+index aaaaaa0..aaaaaae 100644
+--- a/core/tee/sub.mk
++++ b/core/tee/sub.mk
+@@ -50,3 +50,11 @@
+ 
+ srcs-y += uuid.c
+ srcs-y += tee_supp_plugin_rpc.c
++srcs-$(CFG_W77Q_FS) += tee_lfs_storage.c
++srcs-$(CFG_W77Q_FS) += w77q_lfs_port.c
++cflags-tee_lfs_storage.c-y += -DLFS_DEFINES=lfs_w77q_cfg.h -Wno-declaration-after-statement -Wno-format-truncation -Wno-redundant-decls
++cflags-w77q_lfs_port.c-y += -DLFS_DEFINES=lfs_w77q_cfg.h -Wno-declaration-after-statement
++srcs-$(CFG_W77Q_FS) += lfs.c
++cflags-lfs.c-y += -DLFS_DEFINES=lfs_w77q_cfg.h -w
++srcs-$(CFG_W77Q_FS) += lfs_util.c
++cflags-lfs_util.c-y += -DLFS_DEFINES=lfs_w77q_cfg.h -w
+diff --git a/core/include/tee/tee_fs.h b/core/include/tee/tee_fs.h
+--- a/core/include/tee/tee_fs.h
++++ b/core/include/tee/tee_fs.h
+@@ -55,6 +55,10 @@ struct tee_file_operations {
+ #ifdef CFG_REE_FS
+ extern const struct tee_file_operations ree_fs_ops;
+ #endif
++#ifdef CFG_W77Q_FS
++extern const struct tee_file_operations tee_lfs_ops;
++bool tee_lfs_is_ready(void);
++#endif
+ #ifdef CFG_RPMB_FS
+ extern const struct tee_file_operations rpmb_fs_ops;
+ 
+@@ -89,6 +92,8 @@ tee_svc_storage_file_ops(uint32_t storage_id)
+ 		return &ree_fs_ops;
+ #elif defined(CFG_RPMB_FS)
+ 		return &rpmb_fs_ops;
++#elif defined(CFG_W77Q_FS)
++		return tee_lfs_is_ready() ? &tee_lfs_ops : NULL;
+ #else
+ 		return NULL;
+ #endif

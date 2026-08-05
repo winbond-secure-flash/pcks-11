@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Configuration — W77Q/T PKCS#11</title>
+<link href="style.css" rel="stylesheet" type="text/css"/>
+</head>
+<body>
+
+<div id="titlearea">
+    <div>
+        <div id="projectname">W77Q/T PKCS#11 Secure Storage</div>
+        <div id="projectbrief">Release User Guide — Renesas R-Car V4H Sparrow Hawk</div>
+    </div>
+    <div id="projectlogo"><img alt="Winbond" src="winbond_logo.png"/></div>
+</div>
+
+<div id="nav-bar">
+    <a href="index.html">Home</a>
+    <a href="architecture.html">Architecture</a>
+    <a href="package-contents.html">Package Contents</a>
+    <a href="build-guide.html">Build</a>
+    <a href="flash-and-boot.html">Flash &amp; Boot</a>
+    <a href="pkcs11-usage.html">PKCS#11 Usage</a>
+    <a href="provisioning.html" class="active">Configuration</a>
+    <a href="testing.html">Testing</a>
+    <a href="security.html">CVE Disclaimer</a>
+    <a href="release-notes.html">Release Notes</a>
+</div>
+
+<div class="contents">
+
+<h1>Configuration</h1>
+
+<div class="warning">
+<strong>Production keys must be replaced before deployment.</strong><br/>
+The release ships with <strong>sample/development keys</strong> in
+<code>w77q_config.h</code>:
+<ul>
+    <li><code>W77Q_CFG_KD</code> — device master key <strong>(must change)</strong></li>
+    <li><code>W77Q_CFG_KD1</code> — pre-provisioning factory key <strong>(do not change, must match chip OTP)</strong></li>
+</ul>
+<code>W77Q_CFG_KD</code> is a publicly known sample value and provides <strong>no security</strong>.
+Replace it with your own unique 128-bit key before production use.
+</div>
+
+<h2>Configuration File</h2>
+<p>All user-configurable settings are in a single header file:</p>
+<pre><code>recipes-bsp/optee/files/qlib-tee/w77q_config.h</code></pre>
+<p>Edit this file to change:</p>
+<ul>
+    <li><strong>Keys:</strong> <code>W77Q_CFG_KD</code> (customer-editable; KD1 is factory-fixed)</li>
+    <li><strong>Section sizes:</strong> <code>W77Q_CFG_SECTION0_SIZE_MB</code>, <code>W77Q_CFG_SECTION1_SIZE_MB</code></li>
+    <li><strong>Storage section index:</strong> <code>W77Q_CFG_STORAGE_SECTION</code></li>
+</ul>
+<p>After editing, rebuild OP-TEE to apply changes:</p>
+<pre><code>bitbake optee-os -c cleansstate && bitbake optee-os</code></pre>
+
+<h2>Provisioning Overview</h2>
+<p>W77Q/T secure flash requires one-time provisioning to:</p>
+<ol>
+    <li>Configure flash sections (size, offset, access policies)</li>
+    <li>Write cryptographic keys to the W77Q/T OTP area</li>
+    <li>Enable authenticated access to storage sections</li>
+</ol>
+
+<p>There are two provisioning paths in this release:</p>
+<table>
+<tr><th>Path</th><th>Where</th><th>What it does</th></tr>
+<tr>
+    <td><strong>Boot-time provisioning</strong></td>
+    <td><code>w77q_qlib.c</code> → <code>w77q_configChip()</code></td>
+    <td>Configures Section 1 (4 MB, read/write, plain access). Runs inside OP-TEE at boot.</td>
+</tr>
+<tr>
+    <td><strong>Factory provisioning (PTA)</strong></td>
+    <td><code>w77q_provision_pta.c</code> + <code>w77q-provision</code> CLI</td>
+    <td>Accepts master key + section key from Normal World; writes to W77Q/T OTP via QLIB_ConfigDeviceMultiDie.</td>
+</tr>
+</table>
+
+<h2>Section Layout</h2>
+<table>
+<tr><th>Section</th><th>Offset</th><th>Size</th><th>Access</th><th>Usage</th></tr>
+<tr><td>0</td><td>0x000000</td><td>4 MB</td><td>Read-only (after provisioning)</td><td>Boot firmware storage</td></tr>
+<tr><td>1</td><td>0x400000</td><td>4 MB</td><td>Read/Write (authenticated session)</td><td>PKCS#11 object storage</td></tr>
+</table>
+
+<h2>Factory Provisioning (Normal World Tool)</h2>
+<pre><code># On the board (run once on a blank W77Q/T chip):
+w77q-provision \
+    --master-key 00112233445566778899aabbccddeeff \
+    --section-key aabbccddeeff00112233445566778899</code></pre>
+
+<div class="note">
+The provisioning tool communicates with the <strong>Provisioning Pseudo-TA</strong>
+running in OP-TEE Secure World. Keys are passed via shared memory and written
+to W77Q/T OTP — they never touch the filesystem.
+</div>
+
+<h2>Boot-Time Provisioning</h2>
+
+<p>On first boot runs automatically to configure the flash section layout.
+On subsequent boots it is skipped.</p>
+
+<h2>Key Derivation</h2>
+<p>Section keys (Full-access Key and Restricted Key) are derived from the
+W77Q/T device ID (WID) using SHA-256 with a fixed label:</p>
+<pre><code>FK = SHA256(WID[8] || "W77Q_SECTION1_FK")[0:15]   // truncated to 128 bits
+RK = SHA256(WID[8] || "W77Q_SECTION1_RK")[0:15]</code></pre>
+<table>
+<tr><th>Key</th><th>Full Name</th><th>Purpose</th></tr>
+<tr><td><strong>FK</strong></td><td>Full-access Key</td><td>Grants read/write/erase access to the section. Used by OP-TEE to open an authenticated session for PKCS#11 object storage.</td></tr>
+<tr><td><strong>RK</strong></td><td>Restricted Key</td><td>Grants read-only access to the section. Can be used for integrity verification without write permission.</td></tr>
+</table>
+<p>The labels <code>"W77Q_SECTION1_FK"</code> and <code>"W77Q_SECTION1_RK"</code>
+are hardcoded diversification strings — they ensure the two keys are different
+even though both are derived from the same WID. This ensures each physical chip
+gets unique section keys derived from its hardware identity, even when the same
+firmware image is deployed across a production batch.</p>
+
+</div><!-- contents -->
+
+<div id="footer">
+    <strong>Copyright &copy; 2026 Winbond Electronics Corporation. All Rights Reserved.</strong>
+    | <a href="License.txt">License</a>
+    | <a href="ThirdPartyLicenses.txt">Third-Party Licenses</a>
+</div>
+
+</body>
+</html>

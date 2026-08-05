@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000006 Mon Sep 17 00:00:00 2001
+From: Sparrow Hawk BSP <bsp@sparrow-hawk>
+Date: Wed, 01 Jan 2025 00:00:00 +0000
+Subject: [PATCH 6/6] drivers/spi: wire QLIB library into OP-TEE build
+
+Add CFG_W77Q_QLIB build option.  When enabled the Winbond QLIB flash
+stack is linked into OP-TEE Secure World and the W77Q driver interface
+(w77q_read/write/erase_sector from patch 0002) is satisfied by
+w77q_qlib.c (calls QLIB_Read_LA/Write_LA/Erase_LA) instead of the
+minimal direct SPI driver (w77q_direct.c).
+
+The QLIB delivery (prebuilt libqlib.a + public headers) is placed under
+core/drivers/spi/qlib/ by the Yocto optee-os recipe (do_configure:prepend)
+from the QLIB release package.  The sub.mk in that directory compiles the
+integration glue and links the prebuilt archive:
+
+  w77q_qlib.c        — thin wrapper: w77q API → QLIB_*_LA
+  qlib_platform.c    — PLAT_SPI/HASH/NONCE callbacks (self-contained
+                       R-Car RPC-IF SPI driver, OP-TEE crypto, RNG)
+  lib/libqlib.a      — prebuilt aarch64 QLIB static library
+
+CFG_W77Q_QLIB=y routes the build through the qlib/ subdirectory; the
+standalone w77q_direct.c + rcar_rpcif.c path is only compiled when
+CFG_W77Q_QLIB is not set.
+
+Signed-off-by: Sparrow Hawk BSP <bsp@sparrow-hawk>
+---
+ core/arch/arm/plat-rcar/conf.mk |  29 ++++++++++++++++++++++++++
+ core/drivers/spi/sub.mk         |   8 +++++--
+ 2 files changed, 35 insertions(+), 2 deletions()
+
+diff --git a/core/arch/arm/plat-rcar/conf.mk b/core/arch/arm/plat-rcar/conf.mk
+index aaaaaa2..aaaaab0 100644
+--- a/core/arch/arm/plat-rcar/conf.mk
++++ b/core/arch/arm/plat-rcar/conf.mk
+@@ -62,4 +62,33 @@
+ $(call force,CFG_REE_FS,n)
+ $(call force,CFG_RPMB_FS,n)
+ CFG_W77Q_PART_OFFSET ?= 0x200000
+ endif
++
++# W77Q via full QLIB stack linked into OP-TEE Secure World.
++#
++# The QLIB delivery (core/drivers/spi/qlib/) is populated by the Yocto
++# recipe from the QLIB release package (qlib_release/inc + bin/libqlib.a).
++# qlib_platform.c contains its own RPC-IF SPI driver — no separate
++# rcar_rpcif.c needed.  CFG_DRIVERS_SPI is required for the sub.mk tree.
++#
++# CFG_W77Q_QLIB_SECTION_ID  — QLIB section index covering CFG_W77Q_PART_OFFSET.
++#                             Must match the provisioned section layout.
++#
++# CFG_W77Q_QLIB_SECTION_KEY — 128-bit full-access key for that section.
++#                             Set as 4 uint32 words in sub.mk cflags or
++#                             override CFG_W77Q_QLIB_SECTION_KEY in w77q_qlib.c.
++#                             *** REPLACE ZERO DEFAULT BEFORE PRODUCTION ***
++ifeq ($(CFG_W77Q_QLIB),y)
++$(call force,CFG_W77Q,y)
++$(call force,CFG_DRIVERS_SPI,y)
++$(call force,CFG_RCAR_RPCIF_SPI,y)
++CFG_RPCIF_BASE ?= 0xEE200000
++CFG_RPCIF_FLASH_BASE ?= 0x08000000
++CFG_W77Q_QLIB_SECTION_ID ?= 0
++# CFG_W77Q_PART_SECTORS — number of 4 KB sectors in the OP-TEE storage section.
++# Must match the layout burned by QLIB_ConfigDeviceMultiDie (provisioning).
++CFG_W77Q_PART_SECTORS ?= 128
++# CFG_W77Q_QLIB_PROVISION=y enables the provisioning PTA (factory builds only)
++CFG_W77Q_QLIB_PROVISION ?= n
++endif
++
+diff --git a/core/drivers/spi/sub.mk b/core/drivers/spi/sub.mk
+index aaaaaa9..aaaaab1 100644
+--- a/core/drivers/spi/sub.mk
++++ b/core/drivers/spi/sub.mk
+@@ -1,4 +1,11 @@
+ # SPDX-License-Identifier: BSD-2-Clause
+ 
+-srcs-$(CFG_RCAR_RPCIF_SPI) += rcar_rpcif.c
+-srcs-$(CFG_W77Q) += w77q_direct.c
++# RPC-IF SPI driver is always needed (used by both QLIB and direct paths)
++srcs-$(CFG_RCAR_RPCIF_SPI) += rcar_rpcif.c
++
++# Direct minimal W77Q driver (only when QLIB stack is NOT used)
++ifeq ($(CFG_W77Q_QLIB),y)
++subdirs-$(CFG_W77Q) += qlib
++else
++srcs-$(CFG_W77Q) += w77q_direct.c
++endif

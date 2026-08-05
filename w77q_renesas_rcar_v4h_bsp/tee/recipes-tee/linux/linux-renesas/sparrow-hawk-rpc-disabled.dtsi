@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Disable the R-Car RPC-IF node for the Sparrow Hawk board.
+ *
+ * The RPC-IF (0xEE200000) is locked to TrustZone Secure World by TF-A BL31
+ * via LIFEC.SEC_SEL13[22]=0 before Linux boots.  Linux must not probe the
+ * controller even if CONFIG_RENESAS_RPCIF were accidentally re-enabled.
+ *
+ * Layers of protection:
+ *   1. Hardware: LIFEC lock in TF-A BL31 (any NW access → bus error)
+ *   2. Driver:   sparrow-hawk-spi-optee.cfg disables all three RPC-IF kconfigs
+ *   3. DT:       This overlay sets status = "disabled" as a final backstop
+ *
+ * The W77Q flash is accessed exclusively through the OP-TEE W77Q driver
+ * compiled into OP-TEE OS (CFG_W77Q=y, CFG_W77Q_FS=y, CFG_W77Q_QLIB=y).
+ */
+
+/ {
+	aliases {
+		/* Remove the spi0 = &rpc alias so nothing can reference it */
+		spi0 = "";
+	};
+};
+
+&rpc {
+	status = "disabled";
+};

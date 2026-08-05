@@ -1,0 +1,291 @@
+From eb3145160d20a6a8b5673b461f0b1a1c0478cf36 Mon Sep 17 00:00:00 2001
+From: Jens Wiklander <jens.wiklander@linaro.org>
+Date: Wed, 11 Mar 2026 17:08:31 +0100
+Subject: [PATCH] ta: pkcs#11: limit indirect attribute recursion depth
+
+Add a depth parameter for recursive calls handling indirect attributes.
+Most notable is the mutual recursion between sanitize_indirect_attr()
+and sanitize_client_object(). A few functions for debug prints are also
+equipped with a depth parameter to limit the recursion depth.
+
+Recursion depth is set to 5 as a reasonable maximum limit.
+
+Fixes: 63f89caa9022 ("ta: pkcs11: attribute helper functions")
+Signed-off-by: Jens Wiklander <jens.wiklander@linaro.org>
+Acked-by: Jerome Forissier <jerome.forissier@arm.com>
+Reviewed-by: Etienne Carriere <etienne.carriere@st.com>
+---
+ ta/pkcs11/src/attributes.c        | 15 +++++++++++----
+ ta/pkcs11/src/attributes.h        |  7 +++++--
+ ta/pkcs11/src/object.c            |  3 ++-
+ ta/pkcs11/src/pkcs11_attributes.c |  2 +-
+ ta/pkcs11/src/processing_ec.c     |  8 ++++----
+ ta/pkcs11/src/sanitize_object.c   | 29 ++++++++++++++++++++---------
+ ta/pkcs11/src/sanitize_object.h   |  6 ++++--
+ 7 files changed, 47 insertions(+), 23 deletions(-)
+
+diff --git a/ta/pkcs11/src/attributes.c b/ta/pkcs11/src/attributes.c
+index 8f6071c1..430e27fa 100644
+--- a/ta/pkcs11/src/attributes.c
++++ b/ta/pkcs11/src/attributes.c
+@@ -328,13 +328,19 @@ enum pkcs11_rc attributes_match_add_reference(struct obj_attrs **head,
+ #define ATTR_FMT_4BYTE	ATTR_TRACE_FMT ": %02x %02x %02x %02x)"
+ #define ATTR_FMT_ARRAY	ATTR_TRACE_FMT ": %02x %02x %02x %02x ...)"
+ 
+-static void __trace_attributes(char *prefix, void *src, void *end)
++static void __trace_attributes(char *prefix, void *src, void *end,
++			       unsigned int depth)
+ {
+ 	size_t next_off = 0;
+ 	char *prefix2 = NULL;
+ 	size_t prefix_len = strlen(prefix);
+ 	char *cur = src;
+ 
++	if (depth >= PKCS11_MAX_INDIRECT_DEPTH) {
++		EMSG("Too deep indirection");
++		return;
++	}
++
+ 	/* append 4 spaces to the prefix plus terminal '\0' */
+ 	prefix2 = TEE_Malloc(prefix_len + 1 + 4, TEE_MALLOC_FILL_ZERO);
+ 	if (!prefix2)
+@@ -412,7 +418,8 @@ static void __trace_attributes(char *prefix, void *src, void *end)
+ 		case PKCS11_CKA_DERIVE_TEMPLATE:
+ 			if (pkcs11_ref.size)
+ 				trace_attributes(prefix2,
+-						 cur + sizeof(pkcs11_ref));
++						 cur + sizeof(pkcs11_ref),
++						 depth + 1);
+ 			break;
+ 		default:
+ 			break;
+@@ -426,7 +433,7 @@ static void __trace_attributes(char *prefix, void *src, void *end)
+ 	TEE_Free(prefix2);
+ }
+ 
+-void trace_attributes(const char *prefix, void *ref)
++void trace_attributes(const char *prefix, void *ref, unsigned int depth)
+ {
+ 	struct obj_attrs head = { };
+ 	char *pre = NULL;
+@@ -451,7 +458,7 @@ void trace_attributes(const char *prefix, void *ref)
+ 
+ 	pre[prefix ? strlen(prefix) : 0] = '|';
+ 	__trace_attributes(pre, (char *)ref + sizeof(head),
+-			   (char *)ref + sizeof(head) + head.attrs_size);
++			   (char *)ref + sizeof(head) + head.attrs_size, depth);
+ 
+ 	IMSG_RAW("%s`-----------------------", prefix ? prefix : "");
+ 
+diff --git a/ta/pkcs11/src/attributes.h b/ta/pkcs11/src/attributes.h
+index eb27a40a..e19bb4c1 100644
+--- a/ta/pkcs11/src/attributes.h
++++ b/ta/pkcs11/src/attributes.h
+@@ -23,6 +23,8 @@
+ #define PKCS11_BOOLPROPS_BASE		0
+ #define PKCS11_BOOLPROPS_MAX_COUNT	64
+ 
++#define PKCS11_MAX_INDIRECT_DEPTH 5
++
+ enum boolprop_attr {
+ 	BPA_TOKEN = 0,
+ 	BPA_PRIVATE,
+@@ -312,10 +314,11 @@ bool get_bool(struct obj_attrs *head, uint32_t attribute);
+ 
+ #if CFG_TEE_TA_LOG_LEVEL > 0
+ /* Debug: dump object attributes to IMSG() trace console */
+-void trace_attributes(const char *prefix, void *ref);
++void trace_attributes(const char *prefix, void *ref, unsigned int depth);
+ #else
+ static inline void trace_attributes(const char *prefix __unused,
+-				    void *ref __unused)
++				    void *ref __unused,
++				    unsigned int depth __unused)
+ {
+ }
+ #endif /*CFG_TEE_TA_LOG_LEVEL*/
+diff --git a/ta/pkcs11/src/object.c b/ta/pkcs11/src/object.c
+index ed2ce2a9..4574f598 100644
+--- a/ta/pkcs11/src/object.c
++++ b/ta/pkcs11/src/object.c
+@@ -542,7 +542,8 @@ enum pkcs11_rc entry_find_objects_init(struct pkcs11_client *client,
+ 
+ 	rc = sanitize_client_object(&req_attrs, template,
+ 				    sizeof(*template) + template->attrs_size,
+-				    PKCS11_UNDEFINED_ID, PKCS11_UNDEFINED_ID);
++				    PKCS11_UNDEFINED_ID, PKCS11_UNDEFINED_ID,
++				    0);
+ 	if (rc)
+ 		goto out;
+ 
+diff --git a/ta/pkcs11/src/pkcs11_attributes.c b/ta/pkcs11/src/pkcs11_attributes.c
+index 2c6750a2..9b03c2ac 100644
+--- a/ta/pkcs11/src/pkcs11_attributes.c
++++ b/ta/pkcs11/src/pkcs11_attributes.c
+@@ -1263,7 +1263,7 @@ create_attributes_from_template(struct obj_attrs **out, void *template,
+ 	 * template
+ 	 */
+ 	rc = sanitize_client_object(&temp, template, template_size, class,
+-				    type);
++				    type, 0);
+ 	if (rc)
+ 		goto out;
+ 
+diff --git a/ta/pkcs11/src/processing_ec.c b/ta/pkcs11/src/processing_ec.c
+index adf9b5e0..b5b5f97e 100644
+--- a/ta/pkcs11/src/processing_ec.c
++++ b/ta/pkcs11/src/processing_ec.c
+@@ -606,8 +606,8 @@ enum pkcs11_rc generate_ec_keys(struct pkcs11_attribute_head *proc_params,
+ 	    remove_empty_attribute(priv_head, PKCS11_CKA_VALUE) ||
+ 	    remove_empty_attribute(priv_head, PKCS11_CKA_EC_PARAMS)) {
+ 		EMSG("Unexpected attribute(s) found");
+-		trace_attributes("public-key", *pub_head);
+-		trace_attributes("private-key", *priv_head);
++		trace_attributes("public-key", *pub_head, 0);
++		trace_attributes("private-key", *priv_head, 0);
+ 		return PKCS11_CKR_TEMPLATE_INCONSISTENT;
+ 	}
+ 
+@@ -741,8 +741,8 @@ enum pkcs11_rc generate_eddsa_keys(struct pkcs11_attribute_head *proc_params,
+ 	    remove_empty_attribute(priv_head, PKCS11_CKA_EC_POINT) ||
+ 	    remove_empty_attribute(priv_head, PKCS11_CKA_EC_PARAMS)) {
+ 		EMSG("Unexpected attribute(s) found");
+-		trace_attributes("public-key", *pub_head);
+-		trace_attributes("private-key", *priv_head);
++		trace_attributes("public-key", *pub_head, 0);
++		trace_attributes("private-key", *priv_head, 0);
+ 		return PKCS11_CKR_TEMPLATE_INCONSISTENT;
+ 	}
+ 
+diff --git a/ta/pkcs11/src/sanitize_object.c b/ta/pkcs11/src/sanitize_object.c
+index 0f6ff126..5ad11340 100644
+--- a/ta/pkcs11/src/sanitize_object.c
++++ b/ta/pkcs11/src/sanitize_object.c
+@@ -159,7 +159,7 @@ static enum pkcs11_rc sanitize_class_and_type(struct obj_attrs **dst, void *src,
+ 	return PKCS11_CKR_OK;
+ 
+ err:
+-	trace_attributes_from_api_head("bad-template", src, src_size);
++	trace_attributes_from_api_head("bad-template", src, src_size, 0);
+ 
+ 	return rc;
+ }
+@@ -224,17 +224,20 @@ static enum pkcs11_rc sanitize_boolprops(struct obj_attrs **dst, void *src,
+ 
+ static uint32_t sanitize_indirect_attr(struct obj_attrs **dst,
+ 				       struct pkcs11_attribute_head *cli_ref,
+-				       char *data)
++				       char *data, unsigned int depth)
+ {
+ 	struct obj_attrs *obj2 = NULL;
+ 	enum pkcs11_rc rc = PKCS11_CKR_OK;
+ 
++	if (depth >= PKCS11_MAX_INDIRECT_DEPTH)
++		return PKCS11_CKR_TEMPLATE_INCONSISTENT;
++
+ 	assert(pkcs11_attr_has_indirect_attributes(cli_ref->id));
+ 
+ 	/* Build a new serial object while sanitizing the attributes list */
+ 	rc = sanitize_client_object(&obj2, data, cli_ref->size,
+ 				    PKCS11_CKO_UNDEFINED_ID,
+-				    PKCS11_UNDEFINED_ID);
++				    PKCS11_UNDEFINED_ID, depth + 1);
+ 	if (rc)
+ 		goto out;
+ 
+@@ -247,7 +250,7 @@ out:
+ 
+ enum pkcs11_rc sanitize_client_object(struct obj_attrs **dst, void *src,
+ 				      size_t size, uint32_t class_hint,
+-				      uint32_t type_hint)
++				      uint32_t type_hint, unsigned int depth)
+ {
+ 	struct pkcs11_attribute_head cli_ref = { };
+ 	struct pkcs11_object_head head = { };
+@@ -289,7 +292,7 @@ enum pkcs11_rc sanitize_client_object(struct obj_attrs **dst, void *src,
+ 			continue;
+ 
+ 		if (pkcs11_attr_has_indirect_attributes(cli_ref.id)) {
+-			rc = sanitize_indirect_attr(dst, &cli_ref, data);
++			rc = sanitize_indirect_attr(dst, &cli_ref, data, depth);
+ 			if (rc)
+ 				return rc;
+ 
+@@ -313,13 +316,19 @@ enum pkcs11_rc sanitize_client_object(struct obj_attrs **dst, void *src,
+  * Debug: dump object attribute array to output trace
+  */
+ 
+-static void __trace_attributes(char *prefix, void *src, void *end)
++static void __trace_attributes(char *prefix, void *src, void *end,
++			       unsigned int depth)
+ {
+ 	size_t next = 0;
+ 	char *prefix2 = NULL;
+ 	size_t prefix_len = strlen(prefix);
+ 	char *cur = src;
+ 
++	if (depth >= PKCS11_MAX_INDIRECT_DEPTH) {
++		EMSG("Too deep indirection");
++		return;
++	}
++
+ 	/* append 4 spaces to the prefix plus terminal '\0' */
+ 	prefix2 = TEE_Malloc(prefix_len + 1 + 4, TEE_MALLOC_FILL_ZERO);
+ 	if (!prefix2)
+@@ -401,7 +410,8 @@ static void __trace_attributes(char *prefix, void *src, void *end)
+ 			if (avail >= sizeof(struct pkcs11_object_head))
+ 				trace_attributes_from_api_head(prefix2, start,
+ 							       (char *)end -
+-							       start);
++							       start,
++							       depth + 1);
+ 			break;
+ 		default:
+ 			break;
+@@ -415,7 +425,8 @@ static void __trace_attributes(char *prefix, void *src, void *end)
+ 	TEE_Free(prefix2);
+ }
+ 
+-void trace_attributes_from_api_head(const char *prefix, void *ref, size_t size)
++void trace_attributes_from_api_head(const char *prefix, void *ref, size_t size,
++				    unsigned int depth)
+ {
+ 	struct pkcs11_object_head head = { };
+ 	char *pre = NULL;
+@@ -444,7 +455,7 @@ void trace_attributes_from_api_head(const char *prefix, void *ref, size_t size)
+ 	offset = sizeof(head);
+ 	pre[prefix ? strlen(prefix) : 0] = '|';
+ 	__trace_attributes(pre, (char *)ref + offset,
+-			   (char *)ref + offset + head.attrs_size);
++			   (char *)ref + offset + head.attrs_size, depth);
+ 
+ 	DMSG_RAW("%s`-----------------------", prefix ? prefix : "");
+ 
+diff --git a/ta/pkcs11/src/sanitize_object.h b/ta/pkcs11/src/sanitize_object.h
+index 6b170a20..3c9580ac 100644
+--- a/ta/pkcs11/src/sanitize_object.h
++++ b/ta/pkcs11/src/sanitize_object.h
+@@ -26,6 +26,7 @@ bool sanitize_consistent_class_and_type(struct obj_attrs *attrs);
+  *               in serialized object.
+  * @type_hint - Hint for type to be added to template if not presnet
+  *               in serialized object.
++ * @depth - recursion depth.
+  *
+  * This function copies an attribute list from a client API attribute head
+  * into a PKCS11 TA internal attribute structure. It generates a serialized
+@@ -38,9 +39,10 @@ bool sanitize_consistent_class_and_type(struct obj_attrs *attrs);
+  */
+ enum pkcs11_rc sanitize_client_object(struct obj_attrs **dst, void *head,
+ 				      size_t size, uint32_t class_hint,
+-				      uint32_t type_hint);
++				      uint32_t type_hint, unsigned int depth);
+ 
+ /* Debug: dump attribute content as debug traces */
+-void trace_attributes_from_api_head(const char *prefix, void *ref, size_t size);
++void trace_attributes_from_api_head(const char *prefix, void *ref, size_t size,
++				    unsigned int depth);
+ 
+ #endif /*PKCS11_TA_SANITIZE_OBJECT_H*/
+-- 
+2.51.2.windows.1
+

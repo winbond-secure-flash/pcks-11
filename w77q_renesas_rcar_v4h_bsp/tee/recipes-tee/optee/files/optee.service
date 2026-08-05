@@ -1,0 +1,11 @@
+[Unit]
+Description=TEE Supplicant
+After=tee.target
+
+[Service]
+ExecStart=/usr/bin/tee-supplicant --ta-path /lib/optee_armtz --ta-path /usr/lib/optee_armtz
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,160 @@
+From 0000000000000000000000000000000000000001 Mon Sep 17 00:00:00 2001
+From: Sparrow Hawk BSP <bsp@sparrow-hawk>
+Date: Wed, 01 Jan 2025 00:00:00 +0000
+Subject: [PATCH] rcar: v4h: add BL31 early RPC-IF init for W77Q flash
+
+Lock the RPC-IF controller to secure world via LIFEC and perform an
+early probe of the W77Q SPI NOR flash JEDEC ID in BL31.
+
+Lock RPC-IF via LIFEC SEC_SEL13 (0xE611007C) bit 22: clear = secure-only.
+
+Signed-off-by: Sparrow Hawk BSP <bsp@sparrow-hawk>
+---
+diff --git a/plat/renesas/rcar_gen4/bl31_plat_setup.c b/plat/renesas/rcar_gen4/bl31_plat_setup.c
+index d9eb56882..04bb31d75 100644
+--- a/plat/renesas/rcar_gen4/bl31_plat_setup.c
++++ b/plat/renesas/rcar_gen4/bl31_plat_setup.c
+@@ -25,6 +25,7 @@
+ #include "rcar_def.h"
+ #include "rcar_private.h"
+ #include "rcar_version.h"
++#include "rpcif_spi.h"
+ 
+ struct entry_point_info *bl31_plat_get_next_image_ep_info(uint32_t type)
+ {
+@@ -41,6 +42,7 @@ void bl31_early_platform_setup2(u_register_t arg0, u_register_t arg1,
+ 				u_register_t arg2, u_register_t arg3)
+ {
+ 	rcar_console_boot_init();
++	rpcif_spi_early_init();
+ 
+ 	NOTICE("BL3-1 : Rev.%s\n", version_of_renesas);
+ }
+diff --git a/plat/renesas/rcar_gen4/platform.mk b/plat/renesas/rcar_gen4/platform.mk
+index 4639d0f56..db220504b 100644
+--- a/plat/renesas/rcar_gen4/platform.mk
++++ b/plat/renesas/rcar_gen4/platform.mk
+@@ -122,6 +122,7 @@ BL31_SOURCES	+=	${RCAR_GIC_SOURCES}				\
+ 			drivers/renesas/rcar_gen4/ptp/ptp.c		\
+ 			drivers/arm/cci/cci.c
+ 
++BL31_SOURCES += plat/renesas/rcar_gen4/rpcif_spi.c
+ include lib/xlat_tables_v2/xlat_tables.mk
+ PLAT_BL_COMMON_SOURCES	+=	${XLAT_TABLES_LIB_SRCS}
+ 
+diff --git a/plat/renesas/rcar_gen4/rpcif_spi.c b/plat/renesas/rcar_gen4/rpcif_spi.c
+new file mode 100644
+index 000000000..ccf9a1b0f
+--- /dev/null
++++ b/plat/renesas/rcar_gen4/rpcif_spi.c
+@@ -0,0 +1,83 @@
++/*
++ * Copyright (c) 2025, Sparrow Hawk BSP Contributors. All rights reserved.
++ * SPDX-License-Identifier: BSD-3-Clause
++ *
++ * Early BL31 init: lock RPC-IF to TrustZone secure world.
++ *
++ * Initialises the RPC-IF PHY and switches to manual mode so that OP-TEE OS
++ * can use the interface for W77Q secure-flash access.  A JEDEC probe is NOT
++ * attempted here because the R-Car RPC-IF hardware silently corrupts SMRDR0
++ * for SPI commands without an address phase (e.g. RDID 0x9F) in manual mode.
++ * OP-TEE uses hardcoded W77Q51NW parameters as the workaround.
++ *
++ * LIFEC SEC_SEL13 (0xE611007C) bit 22: 0 = RPC slave ports secure-only.
++ * Verified against plat/renesas/common/bl2_secure_setting.c (RCAR_RPC_HYPERFLASH_LOCKED).
++ */
++#include <lib/mmio.h>
++#include <common/debug.h>
++#include "rpcif_spi.h"
++
++/* RPC-IF register base */
++#define RPCIF_BASE       0xEE200000UL
++
++/* RPC-IF registers needed for PHY init and mode switch */
++#define RPCIF_CMNCR      0x000U
++#define RPCIF_PHYCNT     0x07CU
++#define RPCIF_PHYOFFSET1 0x080U
++#define RPCIF_PHYOFFSET2 0x084U
++
++/* CMNCR bits */
++#define CMNCR_MD         (1U << 31)
++#define CMNCR_SFDE       (1U << 24)
++
++/* PHYCNT bits for R-Car Gen4 (r8a779g0) */
++#define PHYCNT_CAL            (1U << 31)
++#define PHYCNT_GEN4_STRTIM    ((7U << 15) | (1U << 27))
++#define PHYCNT_GEN4_UNDOC     0x260U
++
++/* LIFEC SEC_SEL13: bit 22 = RPC slave ports; 0 = secure-only, 1 = non-secure allowed */
++#define LIFEC_SEC_SEL13  0xE611007CUL
++#define LIFEC_RPCIF_BIT  (1U << 22)
++
++void rpcif_spi_early_init(void)
++{
++	uint32_t cmncr = 0U;
++	unsigned int i = 0U;
++
++	/* Lock RPC-IF to Secure World: clear bit 22 in LIFEC SEC_SEL13. */
++	mmio_clrbits_32(LIFEC_SEC_SEL13, LIFEC_RPCIF_BIT);
++
++	/*
++	 * PHY calibration — required for correct SPI sampling on R-Car Gen4.
++	 * Set DDRTMG=3 in PHYOFFSET1 and OCTTMG=4 in PHYOFFSET2, then
++	 * trigger calibration via PHYCNT.CAL and wait for it to self-clear.
++	 */
++	mmio_write_32(RPCIF_BASE + RPCIF_PHYOFFSET1,
++		      (mmio_read_32(RPCIF_BASE + RPCIF_PHYOFFSET1) | (3U << 28)));
++	mmio_write_32(RPCIF_BASE + RPCIF_PHYOFFSET2,
++		      (mmio_read_32(RPCIF_BASE + RPCIF_PHYOFFSET2) & ~(7U << 8)) |
++		      (4U << 8));
++	mmio_write_32(RPCIF_BASE + RPCIF_PHYCNT,
++		      PHYCNT_CAL | PHYCNT_GEN4_STRTIM | PHYCNT_GEN4_UNDOC);
++	for (i = 0U; i < 1000U; i++) {
++		if ((mmio_read_32(RPCIF_BASE + RPCIF_PHYCNT) & PHYCNT_CAL) == 0U)
++			break;
++	}
++
++	/*
++	 * Switch to manual SPI mode:
++	 * - First write CMNCR without MD=1 (direct mode) to deassert any CS
++	 *   left asserted by a prior boot stage (e.g. U-Boot SPI flash access).
++	 * - Then set MD=1 to enter manual mode with CS cleanly deasserted.
++	 */
++	cmncr = mmio_read_32(RPCIF_BASE + RPCIF_CMNCR);
++	cmncr |= CMNCR_SFDE;
++	cmncr &= ~CMNCR_MD;
++	mmio_write_32(RPCIF_BASE + RPCIF_CMNCR, cmncr);	/* direct mode */
++	cmncr |= CMNCR_MD;
++	mmio_write_32(RPCIF_BASE + RPCIF_CMNCR, cmncr);	/* manual mode */
++
++	/* JEDEC probe omitted: RPC-IF errata corrupts SMRDR0 for no-address
++	 * commands (RDID/RDSR).  OP-TEE hardcodes W77Q51NW parameters. */
++	NOTICE("RPC-IF: ready for W77Q51NW (manual mode, JEDEC probe skipped)\n");
++}
+diff --git a/plat/renesas/rcar_gen4/rpcif_spi.h b/plat/renesas/rcar_gen4/rpcif_spi.h
+new file mode 100644
+index 000000000..8b99e4fef
+--- /dev/null
++++ b/plat/renesas/rcar_gen4/rpcif_spi.h
+@@ -0,0 +1,21 @@
++/*
++ * Copyright (c) 2025, Sparrow Hawk BSP Contributors. All rights reserved.
++ * SPDX-License-Identifier: BSD-3-Clause
++ *
++ * R-Car V4H RPC-IF early init for BL31.
++ * Locks RPC-IF to TrustZone secure world and probes W77Q JEDEC ID.
++ *
++ * LIFEC SEC_SEL13 (0xE611007C) bit 22 used to lock RPC-IF to Secure World.
++ */
++#ifndef RPCIF_SPI_H
++#define RPCIF_SPI_H
++
++/**
++ * rpcif_spi_early_init() - Lock RPC-IF to TZ-secure world and probe W77Q.
++ *
++ * Called from bl31_early_platform_setup2() before MMU is enabled.
++ * Safe to call multiple times (idempotent after first call).
++ */
++void rpcif_spi_early_init(void);
++
++#endif /* RPCIF_SPI_H */

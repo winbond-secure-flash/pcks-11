@@ -1,0 +1,585 @@
+From 0000000000000000000000000000000000000001 Mon Sep 17 00:00:00 2001
+From: Sparrow Hawk BSP <bsp@sparrow-hawk>
+Date: Wed, 01 Jan 2025 00:00:00 +0000
+Subject: [PATCH 1/3] drivers/spi: add R-Car RPC-IF SPI bus driver
+
+Add a minimal generic SPI bus abstraction (struct spi_chip / spi_xfer)
+and a driver for the Renesas R-Car RPC-IF controller in Manual SPI Mode.
+
+Enabled by CFG_RCAR_RPCIF_SPI=y. Default MMIO base: 0xEE200000.
+
+Signed-off-by: Sparrow Hawk BSP <bsp@sparrow-hawk>
+---
+ core/arch/arm/plat-rcar/conf.mk       |  10 +++
+ core/drivers/sub.mk                   |   1 +
+ core/drivers/spi/rcar_rpcif.c         | 405 ++++++++++++++++++++++++++++++++++
+ core/drivers/spi/sub.mk               |   3 +
+ core/include/drivers/rcar_rpcif.h     |  60 ++++++++
+ core/include/drivers/spi.h            |  43 +++++++++++
+ 6 files changed, 522 insertions(+)
+ create mode 100644 core/drivers/spi/rcar_rpcif.c
+ create mode 100644 core/drivers/spi/sub.mk
+ create mode 100644 core/include/drivers/rcar_rpcif.h
+ create mode 100644 core/include/drivers/spi.h
+
+diff --git a/core/arch/arm/plat-rcar/conf.mk b/core/arch/arm/plat-rcar/conf.mk
+index aaaaaa1..aaaaaa2 100644
+--- a/core/arch/arm/plat-rcar/conf.mk
++++ b/core/arch/arm/plat-rcar/conf.mk
+@@ -44,3 +44,12 @@
+ $(call force,CFG_ARM_GICV3, y)
+ endif
+ 
++
++# RPC-IF SPI driver (Manual SPI Mode, e.g. Winbond W77Q on R-Car Gen4).
++# Set CFG_RCAR_RPCIF_SPI=y to enable.
++# CFG_RPCIF_BASE may be overridden for boards with a non-default base address.
++ifeq ($(CFG_RCAR_RPCIF_SPI),y)
++$(call force,CFG_DRIVERS_SPI,y)
++CFG_RPCIF_BASE ?= 0xEE200000
++CFG_RPCIF_FLASH_BASE ?= 0x08000000
++endif
+diff --git a/core/drivers/sub.mk b/core/drivers/sub.mk
+index aaaaaa3..aaaaaa4 100644
+--- a/core/drivers/sub.mk
++++ b/core/drivers/sub.mk
+@@ -105,3 +105,4 @@
+ subdirs-y += wdt
+ subdirs-y += rtc
+ subdirs-y += firewall
++subdirs-$(CFG_DRIVERS_SPI) += spi
+diff --git a/core/drivers/spi/sub.mk b/core/drivers/spi/sub.mk
+new file mode 100644
+index 0000000..aaaaaa5
+--- /dev/null
++++ b/core/drivers/spi/sub.mk
+@@ -0,0 +1,3 @@
++# SPDX-License-Identifier: BSD-2-Clause
++
++srcs-$(CFG_RCAR_RPCIF_SPI) += rcar_rpcif.c
+diff --git a/core/include/drivers/spi.h b/core/include/drivers/spi.h
+new file mode 100644
+index 0000000..aaaaaa6
+--- /dev/null
++++ b/core/include/drivers/spi.h
+@@ -0,0 +1,43 @@
++/* SPDX-License-Identifier: BSD-2-Clause */
++/*
++ * Generic SPI bus driver interface for OP-TEE OS.
++ */
++#ifndef __DRIVERS_SPI_H
++#define __DRIVERS_SPI_H
++
++#include <stddef.h>
++#include <stdint.h>
++#include <tee_api_types.h>
++#include <util.h>
++
++/* Flags for spi_xfer() */
++#define SPI_XFER_BEGIN  BIT(0)  /* Assert CS before this transfer   */
++#define SPI_XFER_END    BIT(1)  /* Deassert CS after this transfer  */
++
++/**
++ * struct spi_chip - SPI bus controller abstraction.
++ * @xfer: Perform a (partial) SPI transfer.
++ *        @tx may be NULL for receive-only.
++ *        @rx may be NULL for transmit-only.
++ *        CS is kept asserted between calls unless SPI_XFER_END is set.
++ */
++struct spi_chip {
++	TEE_Result (*xfer)(struct spi_chip *chip, const uint8_t *tx,
++			   uint8_t *rx, size_t len, uint32_t flags);
++};
++
++/**
++ * spi_xfer() - Transfer @len bytes over SPI.
++ * @chip:  Bus controller.
++ * @tx:    Bytes to transmit (NULL for RX-only).
++ * @rx:    Buffer for received bytes (NULL for TX-only).
++ * @len:   Number of bytes.
++ * @flags: SPI_XFER_BEGIN / SPI_XFER_END bitmask.
++ */
++static inline TEE_Result spi_xfer(struct spi_chip *chip, const uint8_t *tx,
++				   uint8_t *rx, size_t len, uint32_t flags)
++{
++	return chip->xfer(chip, tx, rx, len, flags);
++}
++
++#endif /* __DRIVERS_SPI_H */
+diff --git a/core/include/drivers/rcar_rpcif.h b/core/include/drivers/rcar_rpcif.h
+new file mode 100644
+index 0000000..aaaaaa7
+--- /dev/null
++++ b/core/include/drivers/rcar_rpcif.h
+@@ -0,0 +1,60 @@
++/*
++ * R-Car RPC-IF SPI driver for OP-TEE OS.
++ * Supports R-Car Gen4 SoCs (V4H / r8a779g3).
++ */
++#ifndef __DRIVERS_RCAR_RPCIF_H
++#define __DRIVERS_RCAR_RPCIF_H
++
++#include <drivers/spi.h>
++#include <mm/core_memprot.h>
++#include <tee_api_types.h>
++#include <types_ext.h>
++
++/**
++ * struct rcar_rpcif - R-Car RPC-IF controller instance.
++ * @chip: Generic SPI chip ops (must be first — used with container_of).
++ * @base: Physical/virtual address pair for MMIO mapping.
++ */
++struct rcar_rpcif {
++	struct spi_chip chip;
++	struct io_pa_va base;
++	struct io_pa_va flash_base;  /* Flash data window (XIP, 0x08000000) */
++};
++
++/**
++ * rcar_rpcif_init() - Map MMIO and initialise the RPC-IF controller.
++ * @r:  Caller-allocated, zero-initialised instance.
++ * @pa: Physical base address of the RPC-IF register block.
++ *
++ * Switches the controller to Manual SPI Mode and configures PHY
++ * registers for single SPI-NOR device operation.
++ *
++ * Returns TEE_SUCCESS, or TEE_ERROR_GENERIC if MMIO mapping fails.
++ */
++TEE_Result rcar_rpcif_init(struct rcar_rpcif *r, paddr_t pa);
++
++/**
++ * rcar_rpcif_claim() - Re-initialise PHY and restore manual SPI mode.
++ *
++ * Call before each flash operation.  Linux may switch CMNCR to XIP mode
++ * (MD=0) or alter PHY calibration; this restores the OP-TEE manual-mode
++ * state without remapping MMIO.
++ *
++ * Returns TEE_SUCCESS, or TEE_ERROR_BUSY if PHY calibration times out.
++ */
++TEE_Result rcar_rpcif_claim(struct rcar_rpcif *r);
++
++/**
++ * rcar_rpcif_read() - Read @len bytes from flash @addr using XIP mode.
++ *
++ * Switches the RPC-IF to direct-read (XIP) mode (CMNCR.MD=0), reads data
++ * from the memory-mapped flash window at CFG_RPCIF_FLASH_BASE + @flash_addr,
++ * then restores manual SPI mode.  Avoids the SMRDR0 byte-at-a-time path
++ * which does not populate the RX register on R-Car Gen4 hardware.
++ *
++ * Returns TEE_SUCCESS, or TEE_ERROR_GENERIC if flash window is not mapped.
++ */
++TEE_Result rcar_rpcif_read(struct rcar_rpcif *r, uint32_t flash_addr,
++			   void *buf, size_t len);
++
++#endif /* __DRIVERS_RCAR_RPCIF_H */
+diff --git a/core/drivers/spi/rcar_rpcif.c b/core/drivers/spi/rcar_rpcif.c
+new file mode 100644
+index 0000000..aaaaaa8
+--- /dev/null
++++ b/core/drivers/spi/rcar_rpcif.c
+@@ -0,0 +1,405 @@
++// SPDX-License-Identifier: BSD-2-Clause
++/*
++ * R-Car RPC-IF SPI driver for OP-TEE OS.
++ *
++ * Operates the RPC-IF in Manual SPI Mode (CMNCR.MD=1).  Each byte is
++ * transferred using the 8-bit data phase (SMENR.SPIDE=0x8) with no
++ * command/address/option phases, allowing the caller to stream arbitrary
++ * SPI frames.  CS is held via SMCR.SSLKP and released when SPI_XFER_END
++ * is set on the final call.
++ *
++ * Supported: R-Car Gen4 (V4H / r8a779g3).
++ * Default base: 0xEE200000 (override via CFG_RPCIF_BASE).
++ */
++#include <arm.h>
++#include <drivers/rcar_rpcif.h>
++#include <io.h>
++#include <mm/core_memprot.h>
++#include <mm/core_mmu.h>
++#include <trace.h>
++#include <types_ext.h>
++#include <util.h>
++
++/* Register offsets */
++#define RPCIF_CMNCR      0x000
++#define RPCIF_SSLDR      0x004
++#define RPCIF_SMCR       0x020
++#define RPCIF_SMENR      0x030
++#define RPCIF_SMRDR0     0x038
++#define RPCIF_SMWDR0     0x040
++#define RPCIF_CMNSR      0x048
++#define RPCIF_DRCR       0x00C  /* Direct read control */
++#define RPCIF_DRCMR      0x010  /* Direct read command */
++#define RPCIF_DREAR      0x014  /* Direct read address extension */
++#define RPCIF_DRENR      0x01C  /* Direct read enable */
++#define RPCIF_SMDRENR    0x064  /* Manual mode DDR enable (keep at 0) */
++#define RPCIF_DRDRENR    0x05C  /* Direct read DDR enable (keep at 0) */
++#define RPCIF_PHYCNT     0x07C
++#define RPCIF_PHYOFFSET1 0x080
++#define RPCIF_PHYOFFSET2 0x084
++#define RPCIF_MMIO_SIZE  0x0A0
++
++/* CMNCR */
++#define CMNCR_MD              BIT(31)
++#define CMNCR_SFDE            BIT(24)
++#define CMNCR_MOIIO3(v)       (((v) & 0x3U) << 22)
++#define CMNCR_MOIIO2(v)       (((v) & 0x3U) << 20)
++#define CMNCR_MOIIO1(v)       (((v) & 0x3U) << 18)
++#define CMNCR_MOIIO0(v)       (((v) & 0x3U) << 16)
++#define CMNCR_MOIIO_HIZ       (CMNCR_MOIIO0(3) | CMNCR_MOIIO1(3) | \
++				CMNCR_MOIIO2(3) | CMNCR_MOIIO3(3))
++#define CMNCR_IO3FV(v)        (((v) & 0x3U) << 14)
++#define CMNCR_IO2FV(v)        (((v) & 0x3U) << 12)
++#define CMNCR_IO0FV(v)        (((v) & 0x3U) << 8)
++#define CMNCR_IOFV_HIZ        (CMNCR_IO0FV(3) | CMNCR_IO2FV(3) | CMNCR_IO3FV(3))
++#define CMNCR_BSZ(v)          (((v) & 0x3U) << 0)
++
++/* SSLDR */
++#define SSLDR_SPNDL(v)        (((v) & 0x7U) << 16)
++#define SSLDR_SLNDL(v)        (((v) & 0x7U) << 8)
++#define SSLDR_SCKDL(v)        (((v) & 0x7U) << 0)
++
++/* PHYCNT: R-Car Gen4 PHY calibration and strobe timing */
++#define PHYCNT_CAL            BIT(31)
++/* STRTIM2(15): bits[17:15]=7, bit[27]=1 → for R-Car Gen4 (r8a779g0) */
++#define PHYCNT_GEN4_STRTIM    ((7U << 15) | (1U << 27))
++/* Undocumented bits required for correct Gen4 operation (per U-Boot) */
++#define PHYCNT_GEN4_UNDOC     0x260U
++
++/* PHYOFFSET1 */
++#define PHYOFFSET1_DDRTMG(v)  (((v) & 0x3U) << 28)
++
++/* PHYOFFSET2 */
++#define PHYOFFSET2_OCTTMG(v)  (((v) & 0x7U) << 8)
++
++/* SMCR */
++#define SMCR_SSLKP       BIT(8)
++#define SMCR_SPIRE       BIT(2)
++#define SMCR_SPIWE       BIT(1)
++#define SMCR_SPIE        BIT(0)
++
++/* SMENR — SPIDE[3:0] */
++#define SMENR_SPIDE_8BIT 0x8
++#define SMENR_RAW_8BIT   ((uint32_t)SMENR_SPIDE_8BIT)
++
++/* CMNSR */
++#define CMNSR_TEND       BIT(0)
++
++/* DRCR: direct-read cache control */
++#define DRCR_SSLN        BIT(24)
++#define DRCR_RBURST(v)   (((v) & 0x1FU) << 16)
++#define DRCR_RCF         BIT(9)
++#define DRCR_RBE         BIT(8)
++#define DRCR_SSLE        BIT(0)
++
++/* DRCMR: direct-read command */
++#define DRCMR_CMD(v)     (((uint32_t)(v) & 0xFFU) << 16)
++
++/* DRENR: direct-read enable (CDE=command, ADE=address nibble mask) */
++#define DRENR_CDE        BIT(14)
++#define DRENR_ADE(v)     (((uint32_t)(v) & 0xFU) << 8)
++
++#define RPCIF_TEND_TIMEOUT_US 10000U
++
++/* Pre-register RPC-IF MMIO region so io_pa_or_va() can resolve the mapping. */
++register_phys_mem_pgdir(MEM_AREA_IO_SEC, CFG_RPCIF_BASE, RPCIF_MMIO_SIZE);
++
++/* Flash data window (XIP / direct-read mode): 64 MB at 0x38000000 */
++#define RPCIF_FLASH_SIZE 0x04000000U
++register_phys_mem_pgdir(MEM_AREA_IO_SEC, CFG_RPCIF_FLASH_BASE, RPCIF_FLASH_SIZE);
++
++static vaddr_t rpcif_va(struct rcar_rpcif *r)
++{
++	return io_pa_or_va(&r->base, RPCIF_MMIO_SIZE);
++}
++
++static uint32_t rpcif_read(struct rcar_rpcif *r, uint32_t off)
++{
++	return io_read32(rpcif_va(r) + off);
++}
++
++static void rpcif_write(struct rcar_rpcif *r, uint32_t off, uint32_t val)
++{
++	io_write32(rpcif_va(r) + off, val);
++}
++
++/*
++ * rpcif_flush_cache() - Flush the direct-read cache and deassert SS.
++ *
++ * Must be called after switching CMNCR modes or before manual-mode transfers
++ * to ensure the read cache is invalidated and the bus is in a clean state.
++ */
++static void rpcif_flush_cache(struct rcar_rpcif *r)
++{
++	rpcif_write(r, RPCIF_DRCR,
++		    DRCR_SSLN | DRCR_RBURST(31) | DRCR_RCF | DRCR_RBE | DRCR_SSLE);
++	(void)rpcif_read(r, RPCIF_DRCR); /* ensure write commits */
++}
++
++/*
++ * rpcif_wait_tend() - Poll CMNSR.TEND until transfer completes.
++ * Returns TEE_SUCCESS or TEE_ERROR_BUSY on timeout.
++ */
++static TEE_Result rpcif_wait_tend(struct rcar_rpcif *r)
++{
++	uint32_t retries = RPCIF_TEND_TIMEOUT_US;
++
++	while (!(rpcif_read(r, RPCIF_CMNSR) & CMNSR_TEND)) {
++		if (!retries--)
++			return TEE_ERROR_BUSY;
++		isb(); /* timer-free spin: SPI byte completes in < 1 µs */
++	}
++	return TEE_SUCCESS;
++}
++
++/*
++ * rpcif_xfer() - Transfer @len bytes in manual SPI mode.
++ *
++ * RPC-IF manual mode requires full-duplex 8-bit transfers — SPIWE and SPIRE
++ * must always be set together, and SMWDR0 written before each byte (use 0xFF
++ * as dummy TX when receiving only, matching U-Boot renesas_rpc_spi.c).
++ */
++static TEE_Result rpcif_xfer(struct spi_chip *chip, const uint8_t *tx,
++			     uint8_t *rx, size_t len, uint32_t flags)
++{
++	struct rcar_rpcif *r = container_of(chip, struct rcar_rpcif, chip);
++	TEE_Result res = TEE_SUCCESS;
++	size_t i = 0;
++
++	if (!len)
++		return TEE_SUCCESS;
++
++	for (i = 0; i < len; i++) {
++		bool last = (i == len - 1);
++		/*
++		 * SPIDE=0x8 uses bits[31:24] of SMWDR0/SMRDR0 (the high byte).
++		 * Linux kernel renesas-rpc-if.c: writel(val << 24, SMWDR0) for TX,
++		 * (readl(SMRDR0) >> 24) & 0xFF for RX.  Use 0xFF000000 as dummy TX.
++		 *
++		 * Per U-Boot renesas_rpc_spi.c: set SPIWE only for TX, SPIRE only
++		 * for RX — never both simultaneously.  Setting both simultaneously
++		 * causes undefined hardware behaviour on RPC-IF where SMRDR0 is not
++		 * populated and all reads return 0x00.
++		 */
++		uint32_t smcr = SMCR_SPIE;
++
++		if (tx)
++			smcr |= SMCR_SPIWE;
++		if (rx)
++			smcr |= SMCR_SPIRE;
++		if (!tx && !rx)
++			smcr |= SMCR_SPIWE; /* clock-only, no data capture */
++
++		if (!last || !(flags & SPI_XFER_END))
++			smcr |= SMCR_SSLKP;
++
++		/* Wait for controller idle before starting next byte */
++		res = rpcif_wait_tend(r);
++		if (res) {
++			EMSG("rcar_rpcif: TEND pre-wait timeout at byte %zu", i);
++			return res;
++		}
++
++		rpcif_write(r, RPCIF_SMWDR0,
++			    (uint32_t)(tx ? (uint32_t)tx[i] << 24 : 0xFF000000U));
++		rpcif_write(r, RPCIF_SMENR, SMENR_RAW_8BIT);
++		rpcif_write(r, RPCIF_SMCR, smcr);
++
++		res = rpcif_wait_tend(r);
++		if (res) {
++			EMSG("rcar_rpcif: TEND timeout at byte %zu", i);
++			return res;
++		}
++
++		if (rx) {
++			uint32_t raw = rpcif_read(r, RPCIF_SMRDR0);
++			/* RX byte in SMRDR0[31:24] (SPIDE=0x8 high-byte mode) */
++			rx[i] = (uint8_t)((raw >> 24) & 0xFF);
++			if (i < 4)
++				IMSG("rcar_rpcif: byte[%zu] SMCR=0x%08x SMRDR0=0x%08x rx=0x%02x",
++				     i, smcr, raw, rx[i]);
++		}
++	}
++
++	return TEE_SUCCESS;
++}
++
++TEE_Result rcar_rpcif_init(struct rcar_rpcif *r, paddr_t pa)
++{
++	vaddr_t va = (vaddr_t)phys_to_virt_io(pa, RPCIF_MMIO_SIZE);
++
++	if (!va) {
++		EMSG("rcar_rpcif: MMIO mapping failed for PA 0x%" PRIxPA, pa);
++		return TEE_ERROR_GENERIC;
++	}
++	r->base.pa = pa;
++	r->base.va = va;
++	r->chip.xfer = rpcif_xfer;
++
++	{
++		vaddr_t fva = (vaddr_t)phys_to_virt_io(
++			(paddr_t)CFG_RPCIF_FLASH_BASE, RPCIF_FLASH_SIZE);
++
++		if (!fva) {
++			EMSG("rcar_rpcif: flash window mapping failed");
++			return TEE_ERROR_GENERIC;
++		}
++		r->flash_base.pa = (paddr_t)CFG_RPCIF_FLASH_BASE;
++		r->flash_base.va = fva;
++	}
++
++	/*
++	 * PHY init sequence for R-Car Gen4 (r8a779g0) — matches U-Boot
++	 * renesas_rpc_spi.c rpc_spi_claim_bus() register write order.
++	 */
++	/* PHYOFFSET1: set DDRTMG=3 (SDR timing for Gen4) */
++	rpcif_write(r, RPCIF_PHYOFFSET1,
++		    rpcif_read(r, RPCIF_PHYOFFSET1) | PHYOFFSET1_DDRTMG(3));
++	/* PHYOFFSET2: set OCTTMG=4 */
++	rpcif_write(r, RPCIF_PHYOFFSET2,
++		    (rpcif_read(r, RPCIF_PHYOFFSET2) & ~PHYOFFSET2_OCTTMG(7)) |
++		    PHYOFFSET2_OCTTMG(4));
++	/* PHYCNT: trigger PHY calibration with Gen4 strobe timing */
++	rpcif_write(r, RPCIF_PHYCNT,
++		    PHYCNT_CAL | PHYCNT_GEN4_STRTIM | PHYCNT_GEN4_UNDOC);
++
++	/* Wait for PHY calibration to complete (CAL self-clears when done) */
++	{
++		uint32_t i;
++
++		for (i = 0; i < 10000; i++) {
++			if (!(rpcif_read(r, RPCIF_PHYCNT) & PHYCNT_CAL))
++				break;
++			isb(); /* timer-free spin; calibration completes in < 1 ms */
++		}
++		if (i >= 10000) {
++			EMSG("rcar_rpcif: PHY calibration timeout");
++			return TEE_ERROR_BUSY;
++		}
++	}
++
++	/*
++	 * CMNCR: switch to manual SPI mode (MD=1) in a single write.
++	 * Clear SMDRENR to ensure SDR (not DDR) mode for manual transfers.
++	 * Flush the read cache to deassert SS and leave the bus idle.
++	 */
++	rpcif_write(r, RPCIF_CMNCR, CMNCR_MD | CMNCR_SFDE |
++		    CMNCR_MOIIO_HIZ | CMNCR_IOFV_HIZ | CMNCR_BSZ(0));
++	rpcif_write(r, RPCIF_SMDRENR, 0);
++	rpcif_flush_cache(r);
++
++	/* SSLDR: maximum CS setup/hold and clock delays */
++	rpcif_write(r, RPCIF_SSLDR,
++		    SSLDR_SPNDL(7) | SSLDR_SLNDL(7) | SSLDR_SCKDL(7));
++
++	IMSG("rcar_rpcif: ready at PA 0x%" PRIxPA
++	     " CMNCR=0x%08x PHYCNT=0x%08x CMNSR=0x%08x",
++	     pa,
++	     rpcif_read(r, RPCIF_CMNCR),
++	     rpcif_read(r, RPCIF_PHYCNT),
++	     rpcif_read(r, RPCIF_CMNSR));
++	return TEE_SUCCESS;
++}
++
++/*
++ * rcar_rpcif_claim() - Re-initialise PHY and restore manual SPI mode.
++ *
++ * Linux may set CMNCR.MD=0 (XIP/external-address mode) or change PHY
++ * calibration.  Call at the start of each W77Q operation to restore the
++ * state that OP-TEE requires for manual-mode SPI transfers.
++ */
++TEE_Result rcar_rpcif_claim(struct rcar_rpcif *r)
++{
++	/*
++	 * Restore manual SPI mode.  Write CMNCR directly to MD=1 (manual mode)
++	 * in a SINGLE write.  Do NOT write MD=0 first — an intermediate XIP
++	 * mode write triggers a speculative flash read that clears TEND.
++	 *
++	 * Clock gating (RPCCKCR/MSTPCR) is handled at the Linux level:
++	 * CONFIG_RENESAS_RPCIF=n prevents driver loading, and clk_ignore_unused
++	 * on the kernel cmdline prevents clk_disable_unused() from gating the
++	 * rpc-if module clock that U-Boot enabled during board init.
++	 */
++	rpcif_write(r, RPCIF_PHYOFFSET1,
++		    rpcif_read(r, RPCIF_PHYOFFSET1) | PHYOFFSET1_DDRTMG(3));
++	rpcif_write(r, RPCIF_PHYOFFSET2,
++		    (rpcif_read(r, RPCIF_PHYOFFSET2) & ~PHYOFFSET2_OCTTMG(7)) |
++		    PHYOFFSET2_OCTTMG(4));
++	/* Trigger PHY calibration and wait for it to complete (CAL self-clears). */
++	rpcif_write(r, RPCIF_PHYCNT,
++		    PHYCNT_CAL | PHYCNT_GEN4_STRTIM | PHYCNT_GEN4_UNDOC);
++	{
++		uint32_t i;
++
++		for (i = 0; i < 10000; i++) {
++			if (!(rpcif_read(r, RPCIF_PHYCNT) & PHYCNT_CAL))
++				break;
++			isb();
++		}
++		if (i >= 10000)
++			EMSG("rcar_rpcif_claim: PHY calibration timeout");
++	}
++
++	rpcif_write(r, RPCIF_CMNCR, CMNCR_MD | CMNCR_SFDE |
++		    CMNCR_MOIIO_HIZ | CMNCR_IOFV_HIZ | CMNCR_BSZ(0));
++	rpcif_write(r, RPCIF_SSLDR,
++		    SSLDR_SPNDL(7) | SSLDR_SLNDL(7) | SSLDR_SCKDL(7));
++
++	/* Clear DDR mode and flush cache to ensure TEND=1 on return */
++	rpcif_write(r, RPCIF_SMDRENR, 0);
++	rpcif_flush_cache(r);
++
++	return TEE_SUCCESS;
++}
++
++/*
++ * rcar_rpcif_read() - Read @len bytes from flash @flash_addr using XIP mode.
++ *
++ * Configures the RPC-IF direct-read path (READ command 0x03, 3-byte address),
++ * switches to XIP mode (CMNCR.MD=0), copies bytes from the memory-mapped
++ * flash window, then restores manual mode.  This avoids SMRDR0 which does
++ * not capture received bytes in byte-at-a-time mode on R-Car Gen4 hardware.
++ */
++TEE_Result rcar_rpcif_read(struct rcar_rpcif *r, uint32_t flash_addr,
++			   void *buf, size_t len)
++{
++	uint8_t *dst = buf;
++	vaddr_t fva = 0;
++	size_t i = 0;
++
++	if (!len)
++		return TEE_SUCCESS;
++
++	fva = io_pa_or_va(&r->flash_base, RPCIF_FLASH_SIZE);
++	if (!fva) {
++		EMSG("rcar_rpcif: flash window not mapped");
++		return TEE_ERROR_GENERIC;
++	}
++
++	/*
++	 * Switch to XIP mode (CMNCR.MD=0) first, flush, then configure
++	 * the direct-read path.  DRCMR/DRENR only latch when MD=0.
++	 */
++	rpcif_write(r, RPCIF_CMNCR,
++		    CMNCR_SFDE | CMNCR_MOIIO_HIZ | CMNCR_IOFV_HIZ | CMNCR_BSZ(0));
++	rpcif_flush_cache(r);
++
++	/* Standard READ (0x03): command + 3-byte address, SDR, no dummy */
++	rpcif_write(r, RPCIF_DRCMR, 0);
++	rpcif_write(r, RPCIF_DRCMR, DRCMR_CMD(0x03));
++	rpcif_write(r, RPCIF_DREAR, 0);
++	rpcif_write(r, RPCIF_DRDRENR, 0);
++	rpcif_write(r, RPCIF_DRENR, DRENR_CDE | DRENR_ADE(0x7));
++
++	/* Copy from the memory-mapped flash window */
++	for (i = 0; i < len; i++)
++		dst[i] = io_read8(fva + flash_addr + i);
++
++	/* Restore manual SPI mode and flush to clean up the read cache */
++	rpcif_write(r, RPCIF_CMNCR,
++		    CMNCR_MD | CMNCR_SFDE | CMNCR_MOIIO_HIZ |
++		    CMNCR_IOFV_HIZ | CMNCR_BSZ(0));
++	rpcif_flush_cache(r);
++
++	return TEE_SUCCESS;
++}

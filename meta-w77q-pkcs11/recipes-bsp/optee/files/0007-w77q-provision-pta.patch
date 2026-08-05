@@ -1,0 +1,132 @@
+From 0000000000000000000000000000000000000007 Mon Sep 17 00:00:00 2001
+From: Sparrow Hawk BSP <bsp@sparrow-hawk>
+Date: Wed, 01 Jan 2025 00:00:00 +0000
+Subject: [PATCH 7/7] pta: add W77Q section-key provisioning Pseudo-TA
+
+Upstream-Status: Inappropriate [BSP-specific W77Q hardware support]
+
+Add a Pseudo-TA (w77q_provision.pta) that exposes a single command
+W77Q_PROVISION_CMD_SET_KEY (0) callable from Normal World via libteec.
+
+The command accepts two 16-byte MEMREF_INPUT parameters (masterKey,
+sectionKey) and calls w77q_qlib_provision() in core/drivers/spi/qlib/
+to burn the section layout and 128-bit full-access key into the W77Q
+hardware via QLIB_ConfigDeviceMultiDie().
+
+Compiled only when CFG_W77Q_QLIB_PROVISION=y.  Remove this flag from
+production builds after provisioning is complete.
+
+Signed-off-by: Sparrow Hawk BSP <bsp@sparrow-hawk>
+---
+ core/pta/sub.mk              |   3 +
+ core/pta/w77q_provision.c    |  67 ++++++
+ core/include/w77q_provision_ta.h | 39 +++
+ 3 files changed, 109 insertions(+)
+
+diff --git a/core/pta/sub.mk b/core/pta/sub.mk
+index aaaaaa0..aaaaab2 100644
+--- a/core/pta/sub.mk
++++ b/core/pta/sub.mk
+@@ -1,4 +1,7 @@
+ subdirs-$(CFG_TEE_CORE_EMBED_INTERNAL_TESTS) += tests
+ 
++# W77Q one-time section-key provisioning (factory use only)
++srcs-$(CFG_W77Q_QLIB_PROVISION) += w77q_provision.c
++
+ srcs-$(CFG_ATTESTATION_PTA) += attestation.c
+ srcs-$(CFG_DEVICE_ENUM_PTA) += device.c
+diff --git a/core/pta/w77q_provision.c b/core/pta/w77q_provision.c
+new file mode 100644
+index 0000000..aaaaab3
+--- /dev/null
++++ b/core/pta/w77q_provision.c
+@@ -0,0 +1,53 @@
++// SPDX-License-Identifier: BSD-2-Clause
++/*
++ * core/pta/w77q_provision.c — Pseudo-TA for W77Q section key provisioning.
++ *
++ * Exposes W77Q_PROVISION_CMD_SET_KEY callable from Normal World via libteec.
++ * Compiled only when CFG_W77Q_QLIB_PROVISION=y.
++ */
++
++#include <kernel/pseudo_ta.h>
++#include <trace.h>
++#include <string.h>
++
++#include <w77q_provision_ta.h>
++
++/* Declared in core/drivers/spi/qlib/w77q_qlib_provision.c */
++TEE_Result w77q_qlib_provision(const uint32_t masterKey[4],
++			       const uint32_t sectionKey[4]);
++
++#define PTA_NAME "w77q_provision.pta"
++
++static TEE_Result invoke_command(void *session_ctx __unused,
++				 uint32_t cmd,
++				 uint32_t ptypes,
++				 TEE_Param params[TEE_NUM_PARAMS])
++{
++	const uint32_t exp_ptypes =
++		TEE_PARAM_TYPES(TEE_PARAM_TYPE_MEMREF_INPUT,
++				TEE_PARAM_TYPE_MEMREF_INPUT,
++				TEE_PARAM_TYPE_NONE,
++				TEE_PARAM_TYPE_NONE);
++
++	if (cmd != W77Q_PROVISION_CMD_SET_KEY)
++		return TEE_ERROR_NOT_IMPLEMENTED;
++
++	if (ptypes != exp_ptypes)
++		return TEE_ERROR_BAD_PARAMETERS;
++
++	if (params[0].memref.size != W77Q_PROVISION_KEY_SIZE ||
++	    params[1].memref.size != W77Q_PROVISION_KEY_SIZE)
++		return TEE_ERROR_BAD_PARAMETERS;
++
++	IMSG("w77q_provision: received SET_KEY request from Normal World");
++
++	return w77q_qlib_provision(
++		(const uint32_t *)params[0].memref.buffer, /* masterKey  */
++		(const uint32_t *)params[1].memref.buffer  /* sectionKey */
++	);
++}
++
++pseudo_ta_register(.uuid = W77Q_PROVISION_TA_UUID,
++		   .name = PTA_NAME,
++		   .flags = PTA_DEFAULT_FLAGS,
++		   .invoke_command_entry_point = invoke_command);
+diff --git a/core/include/w77q_provision_ta.h b/core/include/w77q_provision_ta.h
+new file mode 100644
+index 0000000..aaaaab4
+--- /dev/null
++++ b/core/include/w77q_provision_ta.h
+@@ -0,0 +1,30 @@
++/* SPDX-License-Identifier: BSD-2-Clause */
++/*
++ * Shared UUID and command definitions for the W77Q provisioning Pseudo-TA.
++ * Include in both the PTA (Secure World) and userspace tool (Normal World).
++ */
++#ifndef W77Q_PROVISION_TA_H
++#define W77Q_PROVISION_TA_H
++
++/*
++ * W77Q provisioning Pseudo-TA UUID:
++ *   7d2b4a3f-8c5e-4f2a-9b1d-6e8f3c7a2b5d
++ */
++#define W77Q_PROVISION_TA_UUID \
++	{ 0x7d2b4a3fU, 0x8c5eU, 0x4f2aU, \
++	  { 0x9bU, 0x1dU, 0x6eU, 0x8fU, 0x3cU, 0x7aU, 0x2bU, 0x5dU } }
++
++/*
++ * W77Q_PROVISION_CMD_SET_KEY — Program section key into W77Q hardware.
++ *
++ * params[0]: MEMREF_INPUT  masterKey  (16 bytes) — current Device Master Key
++ * params[1]: MEMREF_INPUT  sectionKey (16 bytes) — new full-access key
++ *
++ * Returns TEEC_SUCCESS on success.
++ */
++#define W77Q_PROVISION_CMD_SET_KEY  0U
++
++/* Key size in bytes (KEY_T = uint32_t[4] = 16 bytes) */
++#define W77Q_PROVISION_KEY_SIZE     16U
++
++#endif /* W77Q_PROVISION_TA_H */
